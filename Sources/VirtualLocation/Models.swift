@@ -55,34 +55,6 @@ enum ToolState: Equatable {
     case installing
 }
 
-enum CheckinStep: Int, CaseIterable, Comparable {
-    case idle = -1
-    case locate = 0
-    case airplane = 1
-    case offLocation = 2
-    case waiting = 3
-    case onLocation = 4
-    case checkin = 5
-    case done = 6
-
-    var label: String {
-        switch self {
-        case .idle:       return ""
-        case .locate:     return "设置虚拟位置（自动执行）"
-        case .airplane:   return "开启飞行模式（关闭蜂窝+WiFi）"
-        case .offLocation:return "关闭定位服务"
-        case .waiting:    return "等待 5 秒"
-        case .onLocation: return "重新打开定位服务"
-        case .checkin:    return "打开企业微信 → 打卡"
-        case .done:       return "打卡完成，关闭飞行模式"
-        }
-    }
-
-    static func < (lhs: CheckinStep, rhs: CheckinStep) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-}
-
 struct LogEntry: Identifiable {
     let id = UUID()
     let timestamp: Date

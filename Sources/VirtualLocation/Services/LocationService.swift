@@ -8,20 +8,29 @@ final class LocationService: ObservableObject {
     @Published var device: DeviceInfo?
     @Published var logs: [LogEntry] = []
     @Published var manualUDID = ""
-    @Published var checkinStep: CheckinStep = .idle
-    @Published var checkinCountdown = 5
     @Published var customPresets: [LocationPreset] = []
+    @Published var locationState: LocationState = .idle
 
     var allPresets: [LocationPreset] { LocationPreset.builtin + customPresets }
 
     private let deviceManager = DeviceManager()
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
     private var dvtTask: Process?
+    private var refreshTimer: Timer?
+    private var currentLat: Double = 0
+    private var currentLng: Double = 0
 
     enum TunnelState: Equatable {
         case disconnected
         case starting
         case connected
+        case failed(String)
+    }
+
+    enum LocationState: Equatable {
+        case idle
+        case setting
+        case active(lat: Double, lng: Double)
         case failed(String)
     }
 
@@ -86,21 +95,49 @@ final class LocationService: ObservableObject {
         toolState = .installing
         addLog(.info, "正在安装 pymobiledevice3 …")
         status = AppStatus.info("正在安装 … (约 1-2 分钟)")
-        do {
-            let out = try await shell("/usr/bin/python3", args: [
-                "-m", "venv", "\(NSHomeDirectory())/.venv_pmd3"
-            ])
-            addLog(.out, out)
-            let pip = "\(NSHomeDirectory())/.venv_pmd3/bin/pip"
-            let out2 = try await shell(pip, args: ["install", "pymobiledevice3"])
-            addLog(.out, out2)
+        let venvOk = await launchBlocking("/usr/bin/python3",
+            args: ["-m", "venv", "\(NSHomeDirectory())/.venv_pmd3"],
+            log: "venv")
+        guard venvOk else {
+            toolState = .missing
+            status = AppStatus.error("venv 创建失败")
+            return
+        }
+        let pip = "\(NSHomeDirectory())/.venv_pmd3/bin/pip"
+        let pipOk = await launchBlocking(pip, args: ["install", "pymobiledevice3"], log: "pip")
+        if pipOk {
             addLog(.info, "✅ pymobiledevice3 安装完成")
             try? await Task.sleep(nanoseconds: 300_000_000)
             await checkTool()
-        } catch {
+        } else {
             toolState = .missing
-            addLog(.err, "安装失败: \(error.localizedDescription)")
-            status = AppStatus.error("安装失败: \(error.localizedDescription)")
+            status = AppStatus.error("pip install 失败")
+        }
+    }
+
+    private func launchBlocking(_ path: String, args: [String], log: String) async -> Bool {
+        await withCheckedContinuation { cont in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: path)
+            task.arguments = args
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            task.standardOutput = outPipe
+            task.standardError = errPipe
+            task.terminationHandler = { proc in
+                let o = (try? outPipe.fileHandleForReading.readToEnd()).flatMap {
+                    String(data: $0, encoding: .utf8)
+                } ?? ""
+                let e = (try? errPipe.fileHandleForReading.readToEnd()).flatMap {
+                    String(data: $0, encoding: .utf8)
+                } ?? ""
+                Task { @MainActor in
+                    if !o.isEmpty { self.addLog(.out, "[\(log)] \(o)") }
+                    if !e.isEmpty { self.addLog(.out, "[\(log)] \(e)") }
+                }
+                cont.resume(returning: proc.terminationStatus == 0)
+            }
+            try? task.run()
         }
     }
 
@@ -163,7 +200,6 @@ final class LocationService: ObservableObject {
                     Task { @MainActor in
                         if proc.terminationStatus == 0 {
                             self.addLog(.info, "✅ Tunneld 已启动")
-                            // 等待几秒让 daemon 完成初始化
                             try? await Task.sleep(nanoseconds: 3_000_000_000)
                             self.tunnelState = .connected
                             self.status = AppStatus.info("✅ Tunneld 就绪")
@@ -188,11 +224,15 @@ final class LocationService: ObservableObject {
     }
 
     func stopTunneld() async {
-        // 杀掉 tunneld 进程
-        _ = try? await shell("/usr/bin/pkill", args: ["-f", "tunneld"])
         dvtTask?.terminate()
         dvtTask = nil
+        stopLocationRefresh()
+        let killTask = Process()
+        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        killTask.arguments = ["-f", "tunneld"]
+        try? killTask.run()
         tunnelState = .disconnected
+        locationState = .idle
         addLog(.info, "Tunneld 已停止")
         status = AppStatus.info("Tunneld 已断开")
     }
@@ -200,6 +240,9 @@ final class LocationService: ObservableObject {
     // MARK: - Location
 
     func setLocation(lat: Double, lng: Double) async {
+        currentLat = lat
+        currentLng = lng
+
         guard case .present = toolState else {
             status = AppStatus.error("请先安装依赖"); return
         }
@@ -210,123 +253,140 @@ final class LocationService: ObservableObject {
             status = AppStatus.error("请先启动 Tunneld"); return
         }
 
-        dvtTask?.terminate()
-        dvtTask = nil
+        locationState = .setting
 
         let latStr = String(format: "%.6f", lat)
         let lngStr = String(format: "%.6f", lng)
         addLog(.cmd, "DVT 设置位置: \(latStr), \(lngStr) [设备: \(dev.id)]")
         status = AppStatus.info("正在设置位置 …")
 
-        let dvt = Process()
-        dvt.executableURL = URL(fileURLWithPath: pmd3Path)
-        dvt.arguments = ["developer", "dvt", "simulate-location", "set",
-                         "--tunnel", dev.id, "--", latStr, lngStr]
-
-        do {
-            try dvt.run()
-            self.dvtTask = dvt
+        let (success, output) = await launchDVTWithTimeout(
+            args: ["developer", "dvt", "simulate-location", "set",
+                   "--tunnel", dev.id, "--", latStr, lngStr],
+            timeout: 10)
+        if success {
+            if !output.isEmpty { addLog(.out, output) }
             addLog(.info, "✅ DVT 位置已设置 (\(latStr), \(lngStr))")
             status = AppStatus.info("✅ 位置已设为 \(latStr), \(lngStr)")
-        } catch {
-            addLog(.err, "启动 DVT 失败: \(error.localizedDescription)")
-            status = AppStatus.error("设置失败: \(error.localizedDescription)")
+        } else {
+            addLog(.err, "DVT 超时/失败: \(output)")
+            addLog(.info, "但已保存坐标，定时刷新会持续重试")
+            status = AppStatus.info("位置已提交（后台刷新中）")
         }
+
+        locationState = .active(lat: lat, lng: lng)
+        startLocationRefresh()
     }
 
     func clearLocation() async {
+        stopLocationRefresh()
+        dvtTask?.interrupt()
+        dvtTask = nil
+
         guard let dev = device else {
+            locationState = .idle
             status = AppStatus.error("请先连接设备"); return
         }
 
-        dvtTask?.terminate()
-        dvtTask = nil
-        addLog(.info, "DVT 进程已终止")
+        launchDVT(args: ["developer", "dvt", "simulate-location", "clear",
+                         "--tunnel", dev.id]) { [weak self] success, output in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if success { self.addLog(.out, output) }
+                self.addLog(.info, "✅ 位置已清除")
+                self.locationState = .idle
+                self.status = AppStatus.info("✅ 位置已恢复真实 GPS")
+            }
+        }
+    }
+
+    // MARK: - Location Refresh
+
+    private func startLocationRefresh() {
+        stopLocationRefresh()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { [weak self] in
+                await self?.refreshLocation()
+            }
+        }
+        addLog(.info, "定时刷新已启动 (每 30s)")
+    }
+
+    private func stopLocationRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    private func refreshLocation() async {
+        guard case .active = locationState else { return }
+        guard let dev = device, case .connected = tunnelState else { return }
+
+        let latStr = String(format: "%.6f", currentLat)
+        let lngStr = String(format: "%.6f", currentLng)
+
+        let (success, output) = await launchDVTWithTimeout(
+            args: ["developer", "dvt", "simulate-location", "set",
+                   "--tunnel", dev.id, "--", latStr, lngStr],
+            timeout: 10)
+        if success {
+            addLog(.info, "🔄 位置已刷新 (\(latStr), \(lngStr))")
+        } else {
+            addLog(.err, "刷新失败: \(output)")
+        }
+    }
+
+    // MARK: - DVT Launch
+
+    private func launchDVT(args: [String], completion: @escaping (Bool, String) -> Void) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: pmd3Path)
+        task.arguments = args
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        task.standardOutput = outPipe
+        task.standardError = errPipe
+
+        self.dvtTask = task
+
+        final class Flag: @unchecked Sendable { var value = false }
+        let timedOut = Flag()
+        task.terminationHandler = { proc in
+            if timedOut.value { return }
+            let o = (try? outPipe.fileHandleForReading.readToEnd()).flatMap {
+                String(data: $0, encoding: .utf8)
+            } ?? ""
+            let e = (try? errPipe.fileHandleForReading.readToEnd()).flatMap {
+                String(data: $0, encoding: .utf8)
+            } ?? ""
+            completion(proc.terminationStatus == 0, proc.terminationStatus == 0 ? o : (e.isEmpty ? o : e))
+        }
 
         do {
-            let out = try await shell(pmd3Path, args: [
-                "developer", "dvt", "simulate-location", "clear",
-                "--tunnel", dev.id
-            ])
-            addLog(.out, out)
-            addLog(.info, "✅ 位置已清除")
-            status = AppStatus.info("✅ 位置已恢复真实 GPS")
+            try task.run()
         } catch {
-            addLog(.info, "位置已恢复")
-            status = AppStatus.info("位置已恢复")
-        }
-    }
-
-    // MARK: - Check-in Mode
-
-    func startCheckinMode(lat: Double, lng: Double) async {
-        guard case .present = toolState else {
-            status = AppStatus.error("请先安装依赖"); return
-        }
-        guard device != nil else {
-            status = AppStatus.error("请先连接设备"); return
-        }
-        guard case .connected = tunnelState else {
-            status = AppStatus.error("请先启动 Tunneld"); return
+            completion(false, error.localizedDescription)
+            return
         }
 
-        await setLocation(lat: lat, lng: lng)
-        checkinStep = .locate
-        addLog(.info, "📌 打卡模式启动，位置已设置")
-    }
-
-    func advanceCheckinStep() {
-        guard checkinStep.rawValue < CheckinStep.done.rawValue else { return }
-        let next = CheckinStep(rawValue: checkinStep.rawValue + 1) ?? .done
-        checkinStep = next
-        addLog(.cmd, "➡ 打卡步骤: \(next.label)")
-        if next == .waiting {
-            startCountdown()
-        }
-    }
-
-    func resetCheckinMode() {
-        checkinStep = .idle
-        checkinCountdown = 5
-        addLog(.info, "打卡模式已退出")
-    }
-
-    private func startCountdown() {
-        checkinCountdown = 5
-        Task {
-            while checkinCountdown > 0 && checkinStep == .waiting {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                checkinCountdown -= 1
-            }
-            if checkinStep == .waiting {
-                advanceCheckinStep()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+            if task.isRunning {
+                timedOut.value = true
+                task.interrupt()
+                completion(true, "已发送 SIGINT (DVT 正常退出)")
             }
         }
     }
 
-    // MARK: - Shell
-
-    private func shell(_ path: String, args: [String]) async throws -> String {
-        try await withCheckedThrowingContinuation { cont in
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: path)
-            task.arguments = args
-            let outPipe = Pipe(), errPipe = Pipe()
-            task.standardOutput = outPipe
-            task.standardError = errPipe
-            task.terminationHandler = { proc in
-                let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                let errOut = String(data: errData, encoding: .utf8) ?? ""
-                if proc.terminationStatus == 0 {
-                    cont.resume(returning: output)
-                } else {
-                    let msg = (errOut.isEmpty ? output : errOut).trimmingCharacters(in: .whitespacesAndNewlines)
-                    cont.resume(throwing: LocationError.shellError(msg))
-                }
+    private func launchDVTWithTimeout(args: [String], timeout: TimeInterval = 8) async -> (Bool, String) {
+        await withCheckedContinuation { cont in
+            var didFinish = false
+            launchDVT(args: args) { success, output in
+                if !didFinish { didFinish = true; cont.resume(returning: (success, output)) }
             }
-            do { try task.run() } catch { cont.resume(throwing: error) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                if !didFinish { didFinish = true; cont.resume(returning: (false, "超时")) }
+            }
         }
     }
 }
