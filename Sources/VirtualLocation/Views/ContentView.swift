@@ -2,10 +2,11 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var locSvc = LocationService()
-    @State private var customLat = "39.9042"
-    @State private var customLng = "116.3974"
+    @State private var customLat = "39.969951"
+    @State private var customLng = "116.376543"
     @State private var showManualUdid = false
-    @State private var checkinPreset = LocationPreset.presets[0]
+    @State private var checkinPreset = LocationPreset.builtin[0]
+    @State private var presetName = ""
 
     private var busy: Bool { locSvc.status.message.contains("正在") }
     private var toolReady: Bool { if case .present = locSvc.toolState { true } else { false } }
@@ -176,27 +177,33 @@ struct ContentView: View {
     // MARK: - Presets
 
     private var presetsSection: some View {
-        GroupBox("④ 选择景点定位") {
+        GroupBox("④ 选择地点") {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                ForEach(LocationPreset.presets) { preset in
-                    presetCard(preset)
+                ForEach(locSvc.allPresets.indices, id: \.self) { i in
+                    presetCard(locSvc.allPresets[i], index: i, isCustom: i >= LocationPreset.builtin.count)
                 }
             }
         }
         .opacity(locSvc.device == nil ? 0.5 : 1)
     }
 
-    private func presetCard(_ preset: LocationPreset) -> some View {
+    private func presetCard(_ preset: LocationPreset, index: Int, isCustom: Bool) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(preset.name).fontWeight(.medium)
-                Text(preset.landmark).font(.caption).foregroundColor(.secondary)
+                Text(preset.region).font(.caption).foregroundColor(.secondary)
                 Text(preset.coordinateString).font(.caption2.monospaced()).foregroundColor(.secondary)
             }
             Spacer()
-            Button("定位") { Task { await locSvc.setLocation(lat: preset.latitude, lng: preset.longitude) } }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-                .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
+            VStack(spacing: 4) {
+                Button("定位") { Task { await locSvc.setLocation(lat: preset.latitude, lng: preset.longitude) } }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
+                if isCustom {
+                    Button("删除") { locSvc.removeCustomPreset(at: index - LocationPreset.builtin.count) }
+                        .buttonStyle(.borderless).controlSize(.mini).foregroundColor(.red)
+                }
+            }
         }
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -208,24 +215,36 @@ struct ContentView: View {
 
     private var customSection: some View {
         GroupBox("自定义坐标") {
-            HStack(alignment: .bottom, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("纬度").font(.caption).foregroundColor(.secondary)
-                    TextField("纬度", text: $customLat).textFieldStyle(.roundedBorder).frame(width: 130).font(.body.monospaced())
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("经度").font(.caption).foregroundColor(.secondary)
-                    TextField("经度", text: $customLng).textFieldStyle(.roundedBorder).frame(width: 130).font(.body.monospaced())
-                }
-                Spacer()
-                Button("设置") {
-                    guard let lat = Double(customLat), let lng = Double(customLng) else {
-                        locSvc.status = AppStatus.error("请输入有效坐标"); return
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("纬度").font(.caption2).foregroundColor(.secondary)
+                        TextField("纬度", text: $customLat).textFieldStyle(.roundedBorder).frame(width: 120).font(.body.monospaced())
                     }
-                    Task { await locSvc.setLocation(lat: lat, lng: lng) }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("经度").font(.caption2).foregroundColor(.secondary)
+                        TextField("经度", text: $customLng).textFieldStyle(.roundedBorder).frame(width: 120).font(.body.monospaced())
+                    }
+                    TextField("名称（可选）", text: $presetName).textFieldStyle(.roundedBorder).frame(width: 100)
+                    Button("定位") {
+                        guard let lat = Double(customLat), let lng = Double(customLng) else {
+                            locSvc.status = AppStatus.error("请输入有效坐标"); return
+                        }
+                        Task { await locSvc.setLocation(lat: lat, lng: lng) }
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
+                    Button("+ 预设") {
+                        guard let lat = Double(customLat), let lng = Double(customLng) else {
+                            locSvc.status = AppStatus.error("请输入有效坐标"); return
+                        }
+                        let name = presetName.trimmingCharacters(in: .whitespaces)
+                        locSvc.addCustomPreset(name: name.isEmpty ? "\(String(format: "%.4f", lat)), \(String(format: "%.4f", lng))" : name, lat: lat, lng: lng)
+                        presetName = ""
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(customLat.isEmpty || customLng.isEmpty)
                 }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-                .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
             }
             .padding(.vertical, 4)
         }
@@ -243,7 +262,7 @@ struct ContentView: View {
 
                     HStack {
                         Picker("地点", selection: $checkinPreset) {
-                            ForEach(LocationPreset.presets) { p in
+                            ForEach(locSvc.allPresets) { p in
                                 Text(p.name).tag(p)
                             }
                         }

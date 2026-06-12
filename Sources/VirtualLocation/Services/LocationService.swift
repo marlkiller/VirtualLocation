@@ -10,6 +10,9 @@ final class LocationService: ObservableObject {
     @Published var manualUDID = ""
     @Published var checkinStep: CheckinStep = .idle
     @Published var checkinCountdown = 5
+    @Published var customPresets: [LocationPreset] = []
+
+    var allPresets: [LocationPreset] { LocationPreset.builtin + customPresets }
 
     private let deviceManager = DeviceManager()
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
@@ -23,9 +26,38 @@ final class LocationService: ObservableObject {
     }
 
     init() {
+        loadCustomPresets()
         deviceManager.onLog = { [weak self] level, msg in
             DispatchQueue.main.async { self?.addLog(level, msg) }
         }
+    }
+
+    // MARK: - Custom Presets
+
+    func addCustomPreset(name: String, lat: Double, lng: Double) {
+        let preset = LocationPreset(name: name, latitude: lat, longitude: lng, landmark: "", region: "自定义")
+        customPresets.append(preset)
+        saveCustomPresets()
+        addLog(.info, "已添加自定义地点: \(name)")
+    }
+
+    func removeCustomPreset(at index: Int) {
+        guard index >= 0, index < customPresets.count else { return }
+        let name = customPresets[index].name
+        customPresets.remove(at: index)
+        saveCustomPresets()
+        addLog(.info, "已删除自定义地点: \(name)")
+    }
+
+    private func loadCustomPresets() {
+        guard let data = UserDefaults.standard.data(forKey: "customPresets"),
+              let presets = try? JSONDecoder().decode([LocationPreset].self, from: data) else { return }
+        customPresets = presets
+    }
+
+    private func saveCustomPresets() {
+        guard let data = try? JSONEncoder().encode(customPresets) else { return }
+        UserDefaults.standard.set(data, forKey: "customPresets")
     }
 
     // MARK: - Log
