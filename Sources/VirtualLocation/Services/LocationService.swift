@@ -8,6 +8,8 @@ final class LocationService: ObservableObject {
     @Published var device: DeviceInfo?
     @Published var logs: [LogEntry] = []
     @Published var manualUDID = ""
+    @Published var checkinStep: CheckinStep = .idle
+    @Published var checkinCountdown = 5
 
     private let deviceManager = DeviceManager()
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
@@ -220,6 +222,53 @@ final class LocationService: ObservableObject {
         } catch {
             addLog(.info, "位置已恢复")
             status = AppStatus.info("位置已恢复")
+        }
+    }
+
+    // MARK: - Check-in Mode
+
+    func startCheckinMode(lat: Double, lng: Double) async {
+        guard case .present = toolState else {
+            status = AppStatus.error("请先安装依赖"); return
+        }
+        guard device != nil else {
+            status = AppStatus.error("请先连接设备"); return
+        }
+        guard case .connected = tunnelState else {
+            status = AppStatus.error("请先启动 Tunneld"); return
+        }
+
+        await setLocation(lat: lat, lng: lng)
+        checkinStep = .locate
+        addLog(.info, "📌 打卡模式启动，位置已设置")
+    }
+
+    func advanceCheckinStep() {
+        guard checkinStep.rawValue < CheckinStep.done.rawValue else { return }
+        let next = CheckinStep(rawValue: checkinStep.rawValue + 1) ?? .done
+        checkinStep = next
+        addLog(.cmd, "➡ 打卡步骤: \(next.label)")
+        if next == .waiting {
+            startCountdown()
+        }
+    }
+
+    func resetCheckinMode() {
+        checkinStep = .idle
+        checkinCountdown = 5
+        addLog(.info, "打卡模式已退出")
+    }
+
+    private func startCountdown() {
+        checkinCountdown = 5
+        Task {
+            while checkinCountdown > 0 && checkinStep == .waiting {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                checkinCountdown -= 1
+            }
+            if checkinStep == .waiting {
+                advanceCheckinStep()
+            }
         }
     }
 

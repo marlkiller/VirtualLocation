@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var customLat = "39.9042"
     @State private var customLng = "116.3974"
     @State private var showManualUdid = false
+    @State private var checkinPreset = LocationPreset.presets[0]
 
     private var busy: Bool { locSvc.status.message.contains("正在") }
     private var toolReady: Bool { if case .present = locSvc.toolState { true } else { false } }
@@ -22,6 +23,7 @@ struct ContentView: View {
                         tunnelSection
                         presetsSection
                         customSection
+                        checkinSection
                     clearSection
                     statusSection
                     manualUdidSection
@@ -228,6 +230,104 @@ struct ContentView: View {
             .padding(.vertical, 4)
         }
         .opacity(locSvc.device == nil ? 0.5 : 1)
+    }
+
+    // MARK: - Check-in Mode
+
+    private var checkinSection: some View {
+        GroupBox("⑤ 打卡模式（企业微信）") {
+            if locSvc.checkinStep == .idle {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("设置虚拟位置后按步骤操作，断网+重设定位置服务可绕过基站定位检测")
+                        .font(.caption).foregroundColor(.secondary)
+
+                    HStack {
+                        Picker("地点", selection: $checkinPreset) {
+                            ForEach(LocationPreset.presets) { p in
+                                Text(p.name).tag(p)
+                            }
+                        }
+                        .pickerStyle(.menu).labelsHidden().frame(width: 140)
+
+                        Spacer()
+
+                        Button("开始打卡") {
+                            Task { await locSvc.startCheckinMode(lat: checkinPreset.latitude, lng: checkinPreset.longitude) }
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
+                    }
+                }
+                .padding(.vertical, 4)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(CheckinStep.allCases.filter { $0 != .idle }, id: \.rawValue) { step in
+                        stepRow(step: step)
+                    }
+
+                    HStack {
+                        actionButtonForCurrentStep
+                        Spacer()
+                        Button("退出") { locSvc.resetCheckinMode() }
+                            .buttonStyle(.borderless).controlSize(.small).foregroundColor(.secondary)
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtonForCurrentStep: some View {
+        switch locSvc.checkinStep {
+        case .airplane, .offLocation:
+            Button("已操作，下一步") { locSvc.advanceCheckinStep() }
+                .buttonStyle(.borderedProminent).controlSize(.small)
+        case .waiting:
+            HStack(spacing: 4) {
+                ProgressView().scaleEffect(0.5)
+                Text("\(locSvc.checkinCountdown) 秒后自动下一步…")
+                    .font(.caption).foregroundColor(.secondary)
+            }
+        case .onLocation, .checkin:
+            Button("已操作，下一步") { locSvc.advanceCheckinStep() }
+                .buttonStyle(.borderedProminent).controlSize(.small)
+        case .done:
+            Button("✅ 完成打卡") { locSvc.resetCheckinMode() }
+                .buttonStyle(.borderedProminent).controlSize(.small).tint(.green)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func stepRow(step: CheckinStep) -> some View {
+        let current = locSvc.checkinStep
+        let icon: String
+        let color: Color
+        if step < current {
+            icon = "checkmark.circle.fill"
+            color = .green
+        } else if step == current {
+            icon = "arrow.right.circle.fill"
+            color = .accentColor
+        } else {
+            icon = "circle"
+            color = Color(nsColor: .tertiaryLabelColor)
+        }
+
+        return HStack(spacing: 6) {
+            Image(systemName: icon).foregroundColor(color).font(.caption)
+            Text(step.label)
+                .font(.caption)
+                .foregroundColor(step < current ? .secondary :
+                               step == current ? .primary : Color(nsColor: .tertiaryLabelColor))
+            if step == .waiting && current == .waiting {
+                Text("(\(locSvc.checkinCountdown)s)")
+                    .font(.caption2.monospaced()).foregroundColor(.orange)
+            }
+        }
+        .padding(.vertical, 1)
     }
 
     // MARK: - Clear
