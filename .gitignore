@@ -1,0 +1,7 @@
+.build/
+.build/**
+DerivedData/
+*.xcworkspace
+*.xcuserdata
+.DS_Store
+VirtualLocation.app/
