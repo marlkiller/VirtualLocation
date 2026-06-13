@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VirtualLocation",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     targets: [
         .executableTarget(

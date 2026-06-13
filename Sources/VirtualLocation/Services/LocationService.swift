@@ -1,4 +1,5 @@
 import Foundation
+import MapKit
 
 @MainActor
 final class LocationService: ObservableObject {
@@ -7,18 +8,37 @@ final class LocationService: ObservableObject {
     @Published var status = AppStatus.ready
     @Published var device: DeviceInfo?
     @Published var logs: [LogEntry] = []
-    @Published var manualUDID = ""
     @Published var customPresets: [LocationPreset] = []
     @Published var locationState: LocationState = .idle
+    @Published var searchHistory: [SearchHistoryItem] = []
+    @Published var mapSelection = MapSelectionState()
 
     var allPresets: [LocationPreset] { LocationPreset.builtin + customPresets }
+
+    var isSimulating: Bool {
+        if case .active = locationState { true } else { false }
+    }
+
+    var activeLat: Double {
+        if case .active(let lat, _) = locationState { return lat }
+        return mapSelection.selectedCoordinate?.latitude ?? 0
+    }
+
+    var activeLng: Double {
+        if case .active(_, let lng) = locationState { return lng }
+        return mapSelection.selectedCoordinate?.longitude ?? 0
+    }
+
+    var canStartTunnel: Bool {
+        guard case .present = toolState else { return false }
+        guard device != nil else { return false }
+        return true
+    }
 
     private let deviceManager = DeviceManager()
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
     private var dvtTask: Process?
     private var refreshTimer: Timer?
-    private var currentLat: Double = 0
-    private var currentLng: Double = 0
 
     enum TunnelState: Equatable {
         case disconnected
@@ -31,11 +51,13 @@ final class LocationService: ObservableObject {
         case idle
         case setting
         case active(lat: Double, lng: Double)
+        case clearing
         case failed(String)
     }
 
     init() {
         loadCustomPresets()
+        loadSearchHistory()
         deviceManager.onLog = { [weak self] level, msg in
             DispatchQueue.main.async { self?.addLog(level, msg) }
         }
@@ -47,6 +69,7 @@ final class LocationService: ObservableObject {
         let preset = LocationPreset(name: name, latitude: lat, longitude: lng, landmark: "", region: "自定义")
         customPresets.append(preset)
         saveCustomPresets()
+        mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
         addLog(.info, "已添加自定义地点: \(name)")
     }
 
@@ -69,6 +92,57 @@ final class LocationService: ObservableObject {
         UserDefaults.standard.set(data, forKey: "customPresets")
     }
 
+    // MARK: - Search History
+
+    func addToSearchHistory(query: String, lat: Double, lng: Double) {
+        searchHistory.insert(SearchHistoryItem(query: query, latitude: lat, longitude: lng), at: 0)
+        if searchHistory.count > 20 {
+            searchHistory = Array(searchHistory.prefix(20))
+        }
+        saveSearchHistory()
+    }
+
+    func clearSearchHistory() {
+        searchHistory.removeAll()
+        saveSearchHistory()
+    }
+
+    private func loadSearchHistory() {
+        guard let data = UserDefaults.standard.data(forKey: "searchHistory"),
+              let items = try? JSONDecoder().decode([SearchHistoryItem].self, from: data) else { return }
+        searchHistory = items
+    }
+
+    private func saveSearchHistory() {
+        guard let data = try? JSONEncoder().encode(searchHistory) else { return }
+        UserDefaults.standard.set(data, forKey: "searchHistory")
+    }
+
+    // MARK: - Map Search
+
+    func searchLocation(query: String) async {
+        guard !query.isEmpty else { return }
+        mapSelection.isSearching = true
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.resultTypes = [.address, .pointOfInterest]
+
+        let search = MKLocalSearch(request: request)
+        do {
+            let response = try await search.start()
+            mapSelection.searchResults = response.mapItems
+            if let first = response.mapItems.first, let location = first.placemark.location {
+                mapSelection.selectedCoordinate = location.coordinate
+                mapSelection.selectedPlaceName = first.name ?? query
+                mapSelection.centerCoordinate = location.coordinate
+                addToSearchHistory(query: query, lat: location.coordinate.latitude, lng: location.coordinate.longitude)
+            }
+        } catch {
+            addLog(.err, "搜索失败: \(error.localizedDescription)")
+        }
+        mapSelection.isSearching = false
+    }
+
     // MARK: - Log
 
     func addLog(_ level: LogEntry.Level, _ msg: String) {
@@ -87,7 +161,7 @@ final class LocationService: ObservableObject {
         } else {
             toolState = .missing
             addLog(.err, "未找到 pymobiledevice3")
-            status = AppStatus.error("pymobiledevice3 未安装 → 点击安装")
+            status = AppStatus.error("pymobiledevice3 未安装")
         }
     }
 
@@ -144,12 +218,6 @@ final class LocationService: ObservableObject {
     // MARK: - Device
 
     func refreshDevices() async {
-        let manual = manualUDID.trimmingCharacters(in: .whitespaces)
-        if !manual.isEmpty {
-            device = DeviceInfo(id: manual, name: "手动 (\(manual.prefix(8))…)", osVersion: "")
-            status = AppStatus.info("已使用手动 UDID")
-            return
-        }
         status = AppStatus.info("正在扫描设备 …")
         let devices = await deviceManager.detectDevices()
         if let first = devices.first {
@@ -239,10 +307,27 @@ final class LocationService: ObservableObject {
 
     // MARK: - Location
 
-    func setLocation(lat: Double, lng: Double) async {
-        currentLat = lat
-        currentLng = lng
+    func selectCoordinate(_ coordinate: CLLocationCoordinate2D) {
+        mapSelection.selectedCoordinate = coordinate
+        mapSelection.selectedPlaceName = ""
+        reverseGeocode(coordinate)
+    }
 
+    private func reverseGeocode(_ coordinate: CLLocationCoordinate2D) {
+        let geocoder = CLGeocoder()
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
+            guard let self else { return }
+            if let placemark = placemarks?.first {
+                let name = placemark.name ?? placemark.locality ?? "未知地点"
+                Task { @MainActor in
+                    self.mapSelection.selectedPlaceName = name
+                }
+            }
+        }
+    }
+
+    func setLocation(lat: Double, lng: Double) async {
         guard case .present = toolState else {
             status = AppStatus.error("请先安装依赖"); return
         }
@@ -275,7 +360,17 @@ final class LocationService: ObservableObject {
         }
 
         locationState = .active(lat: lat, lng: lng)
+        mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        mapSelection.centerCoordinate = mapSelection.activeCoordinate
         startLocationRefresh()
+    }
+
+    func setSelectedLocation() async {
+        guard let coord = mapSelection.selectedCoordinate else {
+            status = AppStatus.error("请先在地图上选择位置")
+            return
+        }
+        await setLocation(lat: coord.latitude, lng: coord.longitude)
     }
 
     func clearLocation() async {
@@ -288,6 +383,9 @@ final class LocationService: ObservableObject {
             status = AppStatus.error("请先连接设备"); return
         }
 
+        locationState = .clearing
+        status = AppStatus.info("正在恢复真实位置…")
+
         launchDVT(args: ["developer", "dvt", "simulate-location", "clear",
                          "--tunnel", dev.id]) { [weak self] success, output in
             DispatchQueue.main.async {
@@ -295,6 +393,7 @@ final class LocationService: ObservableObject {
                 if success { self.addLog(.out, output) }
                 self.addLog(.info, "✅ 位置已清除")
                 self.locationState = .idle
+                self.mapSelection.activeCoordinate = nil
                 self.status = AppStatus.info("✅ 位置已恢复真实 GPS")
             }
         }
@@ -318,11 +417,11 @@ final class LocationService: ObservableObject {
     }
 
     private func refreshLocation() async {
-        guard case .active = locationState else { return }
+        guard case .active(let lat, let lng) = locationState else { return }
         guard let dev = device, case .connected = tunnelState else { return }
 
-        let latStr = String(format: "%.6f", currentLat)
-        let lngStr = String(format: "%.6f", currentLng)
+        let latStr = String(format: "%.6f", lat)
+        let lngStr = String(format: "%.6f", lng)
 
         let (success, output) = await launchDVTWithTimeout(
             args: ["developer", "dvt", "simulate-location", "set",
@@ -371,7 +470,8 @@ final class LocationService: ObservableObject {
 
         DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
             if task.isRunning {
-                timedOut.value = true
+                let timedOutCopy = timedOut
+                timedOutCopy.value = true
                 task.interrupt()
                 completion(true, "已发送 SIGINT (DVT 正常退出)")
             }
@@ -393,13 +493,9 @@ final class LocationService: ObservableObject {
 
 enum LocationError: LocalizedError {
     case tunnelError(String)
-    case dvtError(String)
-    case shellError(String)
     var errorDescription: String? {
         switch self {
         case .tunnelError(let m): return "Tunneld 错误: \(m)"
-        case .dvtError(let m):    return "DVT 错误: \(m)"
-        case .shellError(let m):  return m
         }
     }
 }

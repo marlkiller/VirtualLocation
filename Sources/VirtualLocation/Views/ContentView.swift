@@ -1,336 +1,284 @@
 import SwiftUI
+import MapKit
 
 struct ContentView: View {
-    @StateObject private var locSvc = LocationService()
-    @State private var customLat = "39.969951"
-    @State private var customLng = "116.376543"
-    @State private var showManualUdid = false
-    @State private var presetName = ""
+    @StateObject private var service = LocationService()
+    @State private var isLogExpanded = true
+    @State private var searchText = ""
+    @State private var mapType: MKMapType = .standard
+    @State private var showSettings = false
+    @State private var showSearchPanel = true
+    @State private var selectionScreenPoint: CGPoint?
+    @State private var zoomInCounter = 0
+    @State private var zoomOutCounter = 0
+    @State private var mapSize: CGSize = .zero
 
-    private var busy: Bool { locSvc.status.message.contains("正在") }
-    private var toolReady: Bool { if case .present = locSvc.toolState { true } else { false } }
-    private var tunnelReady: Bool { if case .connected = locSvc.tunnelState { true } else { false } }
+    private var hasSelection: Bool {
+        service.mapSelection.selectedCoordinate != nil || service.isSimulating
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
-            VStack(alignment: .leading, spacing: 12) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        toolSection
-                        deviceSection
-                        tunnelSection
-                        presetsSection
-                        customSection
-                        clearSection
-                        statusSection
-                        manualUdidSection
+            TopToolbarView(
+                service: service,
+                onStartSimulation: { Task { await service.setSelectedLocation() } },
+                onStopSimulation: { Task { await service.clearLocation() } },
+                onRefreshDevice: { Task { await service.refreshDevices() } },
+                onStartTunnel: { Task { await service.startTunneld() } },
+                onStopTunnel: { Task { await service.stopTunneld() } },
+                onOpenSettings: { showSettings = true },
+                onToggleSearchPanel: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.95)) {
+                        showSearchPanel.toggle()
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
+                }
+            )
+
+            ZStack(alignment: .bottom) {
+                mapLayer
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.onAppear { mapSize = geo.size }
+                        }
+                    )
+
+                // Control panel — follows tapped coordinate, or top-center for search/favorites
+                if hasSelection {
+                    ControlPanelView(
+                        service: service,
+                        onApplyLocation: { Task { await service.setSelectedLocation() } },
+                        onSaveToFavorites: {
+                            guard let coord = service.mapSelection.selectedCoordinate else { return }
+                            let name = service.mapSelection.selectedPlaceName.isEmpty
+                                ? String(format: "%.4f, %.4f", coord.latitude, coord.longitude)
+                                : service.mapSelection.selectedPlaceName
+                            service.addCustomPreset(name: name, lat: coord.latitude, lng: coord.longitude)
+                        },
+                        onCopyCoordinates: {
+                            let lat = service.mapSelection.selectedCoordinate?.latitude ?? service.activeLat
+                            let lng = service.mapSelection.selectedCoordinate?.longitude ?? service.activeLng
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString("\(lat.coordinateString), \(lng.coordinateString)", forType: .string)
+                            service.status = AppStatus.info("坐标已复制: \(lat.coordinateString), \(lng.coordinateString)")
+                        },
+                        onCenterMap: {
+                            if let coord = service.mapSelection.selectedCoordinate {
+                                service.mapSelection.centerCoordinate = coord
+                            }
+                        }
+                    )
+                    .position(
+                        x: (selectionScreenPoint?.x ?? mapSize.width * 2 / 3) + 140,
+                        y: selectionScreenPoint?.y ?? 120
+                    )
+                    .transition(.opacity)
+                    .id(service.mapSelection.selectedCoordinate.map { "\($0.latitude)-\($0.longitude)" } ?? "none")
                 }
 
-                Divider()
-                logSection
-            }
-        }
-        .frame(width: 580, height: 820)
-        .task { await onAppear() }
-    }
+                HStack(spacing: 0) {
+                    if showSearchPanel {
+                        sidebar
+                            .transition(.move(edge: .leading))
+                    }
 
-    private func onAppear() async {
-        locSvc.addLog(.info, "App 启动")
-        await locSvc.checkTool()
-        await locSvc.refreshDevices()
-    }
+                    ZStack(alignment: .bottomTrailing) {
+                        Color.clear
 
-    // MARK: - Header
+                        MapControlsView(
+                            mapType: $mapType,
+                            isSimulating: service.isSimulating,
+                            onZoomIn: { zoomInCounter += 1 },
+                            onZoomOut: { zoomOutCounter += 1 },
+                            onCenterOnLocation: {
+                                if let coord = service.mapSelection.activeCoordinate ?? service.mapSelection.selectedCoordinate {
+                                    service.mapSelection.centerCoordinate = coord
+                                }
+                            },
+                            onClearLocation: { Task { await service.clearLocation() } }
+                        )
+                        .padding(.trailing, DS.Spacing.panelMargin)
+                        .padding(.bottom, DS.Panel.logBarCollapsed + DS.Panel.logBarExpanded + 30)
+                    }
+                }
 
-    private var header: some View {
-        HStack {
-            Image(systemName: "location.circle.fill").foregroundColor(.accentColor).imageScale(.large)
-            Text("虚拟定位").font(.title2.weight(.semibold))
-            Spacer()
-            if case .installing = locSvc.toolState {
-                ProgressView().scaleEffect(0.8).padding(.trailing, 4)
-            }
-            Button("刷新") { Task { await refreshAll() } }
-                .buttonStyle(.borderless).controlSize(.small)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private func refreshAll() async {
-        await locSvc.checkTool()
-        await locSvc.refreshDevices()
-    }
-
-    // MARK: - Tool
-
-    private var toolSection: some View {
-        GroupBox("① 安装依赖") {
-            HStack {
-                switch locSvc.toolState {
-                case .checking:
-                    ProgressView().scaleEffect(0.7).padding(.trailing, 4)
-                    Text("检测中 …").foregroundColor(.secondary)
-                case .missing:
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
-                    Text("pymobiledevice3 未安装").foregroundColor(.secondary)
+                HStack {
                     Spacer()
-                    Button("一键安装") { Task { await locSvc.installDependencies() } }
-                        .buttonStyle(.borderedProminent).controlSize(.small).disabled(busy)
-                case .present:
-                    Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                    Text("pymobiledevice3 已就绪").font(.body).foregroundColor(.secondary)
-                case .installing:
-                    ProgressView().scaleEffect(0.7).padding(.trailing, 4)
-                    Text("安装中 …").foregroundColor(.secondary)
+                    LogDrawerView(
+                        service: service,
+                        isExpanded: $isLogExpanded
+                    )
+                    .frame(maxWidth: 520)
+                    Spacer()
                 }
+                .padding(.bottom, 8)
             }
-            .padding(.vertical, 4)
+        }
+        .ignoresSafeArea()
+        .task { await initializeApp() }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            showSettings = true
+        }
+        .onReceive(service.$locationState) { state in
+            if case .active(let lat, let lng) = state {
+                service.mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            settingsSheet
         }
     }
 
-    // MARK: - Device
+    private func initializeApp() async {
+        service.addLog(.info, "Virtual Location 启动")
+        await service.checkTool()
+        await service.refreshDevices()
+    }
 
-    private var deviceSection: some View {
-        GroupBox("② 连接设备") {
-            HStack {
-                if let d = locSvc.device {
-                    Image(systemName: "iphone.gen3").foregroundColor(.green)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(d.shortName).fontWeight(.medium)
-                        Text("UDID: \(d.id)").font(.caption2.monospaced()).foregroundColor(.secondary)
-                        Text("iOS \(d.osVersion)").font(.caption2).foregroundColor(.secondary)
+    // MARK: - Map
+
+    private var mapLayer: some View {
+        MapView(
+            selectedCoordinate: Binding(
+                get: { service.mapSelection.selectedCoordinate },
+                set: { newValue in
+                    service.mapSelection.selectedCoordinate = newValue
+                    if let coord = newValue {
+                        service.selectCoordinate(coord)
+                    }
+                }
+            ),
+            presets: service.allPresets,
+            activeCoordinate: service.mapSelection.activeCoordinate,
+            centerCoordinate: service.mapSelection.centerCoordinate,
+            mapType: mapType,
+            showPresets: true,
+            onDeletePreset: { preset in
+                if let idx = service.customPresets.firstIndex(where: { $0.id == preset.id }) {
+                    service.removeCustomPreset(at: idx)
+                }
+            },
+            onCoordinateChanged: { coord in
+                service.selectCoordinate(coord)
+            },
+            onCoordinateTapped: { _, point in
+                selectionScreenPoint = point
+            },
+            zoomInCounter: $zoomInCounter,
+            zoomOutCounter: $zoomOutCounter
+        )
+        .edgesIgnoringSafeArea([.leading, .trailing, .bottom])
+    }
+
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        HStack(spacing: 0) {
+            SearchPanelView(
+                service: service,
+                searchText: $searchText,
+                onSearch: { query in
+                    Task { await service.searchLocation(query: query) }
+                },
+                onSelectCoordinate: { coord, name in
+                    service.mapSelection.selectedCoordinate = coord
+                    service.mapSelection.selectedPlaceName = name
+                    service.mapSelection.centerCoordinate = coord
+                },
+                onSelectPreset: { preset in
+                    service.mapSelection.selectedCoordinate = preset.coordinate
+                    service.mapSelection.selectedPlaceName = preset.name
+                    service.mapSelection.centerCoordinate = preset.coordinate
+                }
+            )
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(width: 1)
+        }
+    }
+
+    // MARK: - Settings Sheet
+
+    private var settingsSheet: some View {
+        Form {
+            Section {
+                switch service.toolState {
+                case .checking:
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 16)
+                        Text("检测 pymobiledevice3…")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                case .missing:
+                    LabeledContent {
+                        Button("安装") { Task { await service.installDependencies() } }
+                            .buttonStyle(.glass(tint: .dsAccent, prominent: true))
+                            .disabled(service.toolState == .installing)
+                    } label: {
+                        Label("pymobiledevice3", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.dsWarning)
+                    }
+                case .present:
+                    LabeledContent {
+                        Text("已就绪")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.dsSuccess)
+                    } label: {
+                        Label("pymobiledevice3", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.dsSuccess)
+                    }
+                case .installing:
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 16)
+                        Text("安装中… (约 1-2 分钟)")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            } header: {
+                Label("依赖", systemImage: "cube.transparent")
+            }
+
+            Section {
+                if let dev = service.device {
+                    LabeledContent {
+                        Text(dev.id)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    } label: {
+                        Label(dev.name, systemImage: "iphone")
+                    }
+
+                    if !dev.osVersion.isEmpty {
+                        LabeledContent {
+                            Text(dev.osVersion)
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        } label: {
+                            Label("系统版本", systemImage: "gear")
+                        }
                     }
                 } else {
-                    Image(systemName: "iphone.slash").foregroundColor(.red)
-                    Text("未检测到设备（USB 连接并信任后点刷新）").font(.caption).foregroundColor(.secondary)
-                }
-                Spacer()
-                Button("刷新") { Task { await locSvc.refreshDevices() } }
-                    .buttonStyle(.borderless).controlSize(.small).disabled(busy)
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    // MARK: - Tunnel
-
-    private var tunnelSection: some View {
-        GroupBox("③ 启动隧道") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    switch locSvc.tunnelState {
-                    case .disconnected:
-                        Image(systemName: "cable.connector.slash").foregroundColor(.red)
-                        Text("未连接").foregroundColor(.secondary)
-                    case .starting:
-                        ProgressView().scaleEffect(0.7).padding(.trailing, 4)
-                        Text("正在启动 …").foregroundColor(.secondary)
-                    case .connected:
-                        Image(systemName: "cable.connector").foregroundColor(.green)
-                        Text("Tunneld 已连接").font(.body)
-                    case .failed(let msg):
-                        Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
-                        Text(msg).font(.caption).foregroundColor(.orange).lineLimit(2)
-                    }
-                    Spacer()
-
-                    switch locSvc.tunnelState {
-                    case .disconnected, .failed:
-                        Button("🔌 启动 Tunneld") { Task { await locSvc.startTunneld() } }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
-                            .disabled(!toolReady || locSvc.device == nil || busy)
-                    case .starting:
-                        EmptyView()
-                    case .connected:
-                        Button("断开") { Task { await locSvc.stopTunneld() } }
-                            .buttonStyle(.bordered).controlSize(.small)
+                    LabeledContent {
+                        Text("未检测到")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } label: {
+                        Label("当前设备", systemImage: "iphone.slash")
+                            .foregroundColor(.secondary)
                     }
                 }
 
-                if case .disconnected = locSvc.tunnelState, toolReady, locSvc.device != nil {
-                    Text("点击启动 → 弹窗输入 Mac 密码 → 后台持久运行")
-                        .font(.caption).foregroundColor(Color(nsColor: .tertiaryLabelColor))
-                }
-                if case .failed = locSvc.tunnelState {
-                    Text("提示：可在终端先杀掉旧进程再试").font(.caption).foregroundColor(.secondary)
-                    HStack {
-                        Image(systemName: "terminal").foregroundColor(.secondary)
-                        Text("sudo pkill -f tunneld")
-                            .font(.caption2.monospaced()).textSelection(.enabled)
-                    }
-                    .padding(6).background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    // MARK: - Presets
-
-    private var presetsSection: some View {
-        GroupBox("④ 选择地点") {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                ForEach(locSvc.allPresets.indices, id: \.self) { i in
-                    presetCard(locSvc.allPresets[i], index: i, isCustom: i >= LocationPreset.builtin.count)
-                }
+            } header: {
+                Label("设备", systemImage: "iphone.gen3")
             }
         }
-        .opacity(locSvc.device == nil ? 0.5 : 1)
-    }
-
-    private func presetCard(_ preset: LocationPreset, index: Int, isCustom: Bool) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(preset.name).fontWeight(.medium)
-                Text(preset.region).font(.caption).foregroundColor(.secondary)
-                Text(preset.coordinateString).font(.caption2.monospaced()).foregroundColor(.secondary)
-            }
-            Spacer()
-            VStack(spacing: 4) {
-                Button("定位") { Task { await locSvc.setLocation(lat: preset.latitude, lng: preset.longitude) } }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
-                if isCustom {
-                    Button("删除") { locSvc.removeCustomPreset(at: index - LocationPreset.builtin.count) }
-                        .buttonStyle(.borderless).controlSize(.mini).foregroundColor(.red)
-                }
-            }
-        }
-        .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor), lineWidth: 0.5))
-    }
-
-    // MARK: - Custom
-
-    private var customSection: some View {
-        GroupBox("自定义坐标") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .bottom, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("纬度").font(.caption2).foregroundColor(.secondary)
-                        TextField("纬度", text: $customLat).textFieldStyle(.roundedBorder).frame(width: 120).font(.body.monospaced())
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("经度").font(.caption2).foregroundColor(.secondary)
-                        TextField("经度", text: $customLng).textFieldStyle(.roundedBorder).frame(width: 120).font(.body.monospaced())
-                    }
-                    TextField("名称（可选）", text: $presetName).textFieldStyle(.roundedBorder).frame(width: 100)
-                    Button("定位") {
-                        guard let lat = Double(customLat), let lng = Double(customLng) else {
-                            locSvc.status = AppStatus.error("请输入有效坐标"); return
-                        }
-                        Task { await locSvc.setLocation(lat: lat, lng: lng) }
-                    }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    .disabled(!toolReady || !tunnelReady || locSvc.device == nil || busy)
-                    Button("+ 预设") {
-                        guard let lat = Double(customLat), let lng = Double(customLng) else {
-                            locSvc.status = AppStatus.error("请输入有效坐标"); return
-                        }
-                        let name = presetName.trimmingCharacters(in: .whitespaces)
-                        locSvc.addCustomPreset(name: name.isEmpty ? "\(String(format: "%.4f", lat)), \(String(format: "%.4f", lng))" : name, lat: lat, lng: lng)
-                        presetName = ""
-                    }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .disabled(customLat.isEmpty || customLng.isEmpty)
-                }
-            }
-            .padding(.vertical, 4)
-        }
-        .opacity(locSvc.device == nil ? 0.5 : 1)
-    }
-
-    // MARK: - Clear
-
-    private var clearSection: some View {
-        HStack {
-            Button("🔄 恢复真实位置", role: .destructive) {
-                Task { await locSvc.clearLocation() }
-            }
-            .buttonStyle(.bordered).controlSize(.small)
-            .disabled(!tunnelReady || busy)
-
-            if !toolReady && locSvc.device != nil {
-                Text("请先完成第①步安装依赖").font(.caption).foregroundColor(.orange)
-            } else if toolReady && !tunnelReady && locSvc.device != nil {
-                Text("请先完成第③步启动隧道").font(.caption).foregroundColor(.orange)
-            }
-            Spacer()
-        }
-    }
-
-    // MARK: - Manual UDID
-
-    private var manualUdidSection: some View {
-        GroupBox {
-            DisclosureGroup(isExpanded: $showManualUdid, content: {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("在终端执行以下命令获取 UDID：").font(.caption).foregroundColor(.secondary)
-                    HStack {
-                        Image(systemName: "terminal").foregroundColor(.secondary)
-                        Text("xcrun xctrace list devices").font(.body.monospaced()).textSelection(.enabled)
-                    }
-                    .padding(8).background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    HStack(spacing: 8) {
-                        TextField("粘贴 UDID", text: $locSvc.manualUDID).textFieldStyle(.roundedBorder)
-                            .font(.body.monospaced()).frame(maxWidth: .infinity)
-                        Button("应用") {
-                            locSvc.manualUDID = locSvc.manualUDID.trimmingCharacters(in: .whitespaces)
-                            Task { await locSvc.refreshDevices() }
-                        }
-                        .buttonStyle(.borderedProminent).controlSize(.small)
-                        .disabled(locSvc.manualUDID.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-                .padding(.top, 6)
-            }, label: {
-                Label("手动输入 UDID", systemImage: "rectangle.and.pencil.and.ellipsis")
-                    .font(.caption).foregroundColor(.secondary)
-            })
-        }
-    }
-
-    // MARK: - Log
-
-    private var logSection: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Label("运行日志", systemImage: "doc.text.magnifyingglass")
-                    .font(.caption).foregroundColor(.secondary)
-                Spacer()
-                Text("\(locSvc.logs.count) 条")
-                    .font(.caption2).foregroundColor(Color(nsColor: .tertiaryLabelColor))
-                Button("清空") { locSvc.logs.removeAll() }
-                    .buttonStyle(.borderless).controlSize(.mini)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 4)
-
-            LogTextView(logs: locSvc.logs)
-                .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 250)
-        }
-        .background(Color(nsColor: .textBackgroundColor))
-    }
-
-    // MARK: - Status
-
-    private var statusSection: some View {
-        HStack {
-            Circle().fill(locSvc.status.isError ? Color.red : Color.green).frame(width: 8, height: 8)
-            Text(locSvc.status.message).font(.callout)
-                .foregroundColor(locSvc.status.isError ? .red : .secondary).textSelection(.enabled)
-            Spacer()
-        }
-        .padding(10).background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .formStyle(.grouped)
+        .frame(width: 380, height: 260)
     }
 }

@@ -1,6 +1,12 @@
 import SwiftUI
 import AppKit
 
+class LogTextViewImpl: NSTextView {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+    }
+}
+
 struct LogTextView: NSViewRepresentable {
     let logs: [LogEntry]
 
@@ -17,7 +23,7 @@ struct LogTextView: NSViewRepresentable {
         scroll.drawsBackground = true
         scroll.backgroundColor = .textBackgroundColor
 
-        let tv = NSTextView()
+        let tv = LogTextViewImpl()
         tv.isEditable = false
         tv.isSelectable = true
         tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)

@@ -19,6 +19,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS" "$RESOURCES"
 
 cp "$RELEASE_BIN" "$MACOS/$APP_NAME"
+cp "$PROJECT_DIR/Resources/AppIcon.icns" "$RESOURCES/AppIcon.icns"
 
 cat > "$CONTENTS/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +41,8 @@ cat > "$CONTENTS/Info.plist" << EOF
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>LSUIElement</key>
