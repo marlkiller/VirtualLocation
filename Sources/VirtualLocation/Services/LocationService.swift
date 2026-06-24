@@ -12,6 +12,22 @@ final class LocationService: ObservableObject {
     @Published var locationState: LocationState = .idle
     @Published var searchHistory: [SearchHistoryItem] = []
     @Published var mapSelection = MapSelectionState()
+    @Published var enableJittering: Bool = false
+
+    @Published var locationMode: LocationMode = .simple {
+        didSet { saveLocationMode() }
+    }
+    @Published var proxyState: ProxyState = .stopped
+    @Published var proxySettings: ProxySettings = {
+        if let data = UserDefaults.standard.data(forKey: "proxySettings"),
+           let settings = try? JSONDecoder().decode(ProxySettings.self, from: data) {
+            return settings
+        }
+        return .default
+    }() {
+        didSet { saveProxySettings() }
+    }
+    @Published var wlocPatchedCount: Int = 0
 
     var allPresets: [LocationPreset] { LocationPreset.builtin + customPresets }
 
@@ -39,6 +55,7 @@ final class LocationService: ObservableObject {
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
     private var dvtTask: Process?
     private var refreshTimer: Timer?
+    private var proxyServer: ProxyServer?
 
     enum TunnelState: Equatable {
         case disconnected
@@ -58,9 +75,123 @@ final class LocationService: ObservableObject {
     init() {
         loadCustomPresets()
         loadSearchHistory()
+        loadLocationMode()
         deviceManager.onLog = { [weak self] level, msg in
             DispatchQueue.main.async { self?.addLog(level, msg) }
         }
+    }
+
+    // MARK: - Location Mode
+
+    private func loadLocationMode() {
+        let raw = UserDefaults.standard.string(forKey: "locationMode") ?? LocationMode.simple.rawValue
+        locationMode = LocationMode(rawValue: raw) ?? .simple
+    }
+
+    private func saveLocationMode() {
+        UserDefaults.standard.set(locationMode.rawValue, forKey: "locationMode")
+    }
+
+    private func saveProxySettings() {
+        guard let data = try? JSONEncoder().encode(proxySettings) else { return }
+        UserDefaults.standard.set(data, forKey: "proxySettings")
+    }
+
+    // MARK: - Proxy Mode
+
+    func startProxy() async {
+        guard locationMode == .proxy else { return }
+
+        do {
+            proxyState = .starting
+            addLog(.info, "正在初始化 CA 证书…")
+
+            // Ensure CA exists
+            _ = try CertificateManager.shared.ensureCA()
+
+            // Pre-load certs for WLOC hostnames
+            try CertificateManager.shared.certificateForHost("gs-loc.apple.com")
+            try CertificateManager.shared.certificateForHost("gs-loc-cn.apple.com")
+
+            let port = proxySettings.port
+            let config = ProxyConfig(
+                port: port,
+                targetLatitude: activeLat,
+                targetLongitude: activeLng,
+                targetAccuracy: 25,
+                onLog: { [weak self] level, msg in
+                    Task { @MainActor in self?.addLog(level, msg) }
+                },
+                onWlocPatched: { [weak self] _, stats in
+                    Task { @MainActor in
+                        self?.wlocPatchedCount += stats.locations
+                    }
+                }
+            )
+
+            let server = ProxyServer(config: config)
+            try server.start()
+            self.proxyServer = server
+            proxyState = .running(port: port)
+            addLog(.info, "✅ 代理服务器运行于端口 \(port)")
+            addLog(.info, "📱 在 iOS 设备 Wi-Fi 设置中配置 HTTP 代理为: 本机IP:\(port)")
+            addLog(.info, "🔐 安装 CA: 访问 http://本机IP:\(port)/ca 下载并信任证书")
+            status = AppStatus.info("代理已启动 :\(port)")
+
+        } catch {
+            proxyState = .failed(error.localizedDescription)
+            addLog(.err, "代理启动失败: \(error.localizedDescription)")
+            status = AppStatus.error("代理启动失败")
+        }
+    }
+
+    func stopProxy() {
+        proxyServer?.stop()
+        proxyServer = nil
+        proxyState = .stopped
+        wlocPatchedCount = 0
+        addLog(.info, "代理服务器已停止")
+        status = AppStatus.info("代理已停止")
+        locationState = .idle
+    }
+
+    func applyProxyLocation(lat: Double, lng: Double) async {
+        // Update proxy config with new target coordinates
+        if case .running(let port) = proxyState {
+            let config = ProxyConfig(
+                port: port,
+                targetLatitude: lat,
+                targetLongitude: lng,
+                targetAccuracy: 25,
+                onLog: { [weak self] level, msg in
+                    Task { @MainActor in self?.addLog(level, msg) }
+                },
+                onWlocPatched: { [weak self] _, stats in
+                    Task { @MainActor in
+                        self?.wlocPatchedCount += stats.locations
+                    }
+                }
+            )
+            proxyServer?.stop()
+            let server = ProxyServer(config: config)
+            do {
+                try server.start()
+                self.proxyServer = server
+                locationState = .active(lat: lat, lng: lng)
+                mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                mapSelection.centerCoordinate = mapSelection.activeCoordinate
+                addLog(.info, "✅ 代理目标已更新: \(lat.coordinateString), \(lng.coordinateString)")
+                status = AppStatus.info("代理目标已更新")
+            } catch {
+                addLog(.err, "更新代理失败: \(error.localizedDescription)")
+                proxyState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    var proxyPort: UInt16 {
+        if case .running(let port) = proxyState { return port }
+        return proxySettings.port
     }
 
     // MARK: - Custom Presets
@@ -354,9 +485,16 @@ final class LocationService: ObservableObject {
             addLog(.info, "✅ DVT 位置已设置 (\(latStr), \(lngStr))")
             status = AppStatus.info("✅ 位置已设为 \(latStr), \(lngStr)")
         } else {
-            addLog(.err, "DVT 超时/失败: \(output)")
-            addLog(.info, "但已保存坐标，定时刷新会持续重试")
-            status = AppStatus.info("位置已提交（后台刷新中）")
+            addLog(.err, "DVT 失败: \(output)")
+            if output.lowercased().contains("developer mode") || output.lowercased().contains("mount") {
+                status = AppStatus.error("请确保已开启开发者模式并挂载镜像")
+                addLog(.err, "需要在 iOS 设备设置 -> 隐私与安全性 中开启开发者模式。")
+            } else if output.lowercased().contains("trust") || output.lowercased().contains("untrusted") {
+                status = AppStatus.error("请在设备上点击信任此电脑！")
+            } else {
+                addLog(.info, "已保存坐标，定时刷新会持续重试")
+                status = AppStatus.info("位置已提交（后台重试中）")
+            }
         }
 
         locationState = .active(lat: lat, lng: lng)
@@ -370,10 +508,27 @@ final class LocationService: ObservableObject {
             status = AppStatus.error("请先在地图上选择位置")
             return
         }
+
+        if locationMode == .proxy {
+            if case .running = proxyState {
+                await applyProxyLocation(lat: coord.latitude, lng: coord.longitude)
+            } else {
+                status = AppStatus.error("代理未启动，请先启动代理")
+            }
+            return
+        }
+
         await setLocation(lat: coord.latitude, lng: coord.longitude)
     }
 
     func clearLocation() async {
+        if locationMode == .proxy {
+            stopProxy()
+            mapSelection.activeCoordinate = nil
+            status = AppStatus.info("位置已清除")
+            return
+        }
+
         stopLocationRefresh()
         dvtTask?.interrupt()
         dvtTask = nil
@@ -420,8 +575,22 @@ final class LocationService: ObservableObject {
         guard case .active(let lat, let lng) = locationState else { return }
         guard let dev = device, case .connected = tunnelState else { return }
 
-        let latStr = String(format: "%.6f", lat)
-        let lngStr = String(format: "%.6f", lng)
+        var targetLat = lat
+        var targetLng = lng
+        
+        if enableJittering {
+            // Add a small random offset (approx 1-3 meters)
+            // 1 degree latitude ~ 111,111 meters
+            let latOffset = (Double.random(in: -3...3)) / 111111.0
+            // 1 degree longitude ~ 111,111 * cos(lat) meters
+            let lngOffset = (Double.random(in: -3...3)) / (111111.0 * cos(lat * .pi / 180.0))
+            targetLat += latOffset
+            targetLng += lngOffset
+            addLog(.info, "✨ 应用位置抖动漂移...")
+        }
+
+        let latStr = String(format: "%.6f", targetLat)
+        let lngStr = String(format: "%.6f", targetLng)
 
         let (success, output) = await launchDVTWithTimeout(
             args: ["developer", "dvt", "simulate-location", "set",
@@ -486,6 +655,44 @@ final class LocationService: ObservableObject {
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                 if !didFinish { didFinish = true; cont.resume(returning: (false, "超时")) }
+            }
+        }
+    }
+
+    // MARK: - GPX Parsing
+    
+    func loadGPX(from url: URL) async {
+        addLog(.info, "正在加载 GPX: \(url.lastPathComponent)")
+        guard let parser = XMLParser(contentsOf: url) else {
+            addLog(.err, "无法读取 GPX 文件")
+            return
+        }
+        
+        let delegate = GPXParserDelegate()
+        parser.delegate = delegate
+        if parser.parse() {
+            if let first = delegate.coordinates.first {
+                mapSelection.selectedCoordinate = first
+                mapSelection.centerCoordinate = first
+                mapSelection.selectedPlaceName = url.lastPathComponent
+                addLog(.info, "✅ GPX 加载成功 (\(delegate.coordinates.count)个点)")
+            } else {
+                addLog(.err, "GPX 中未找到坐标")
+            }
+        } else {
+            addLog(.err, "GPX 解析失败")
+        }
+    }
+}
+
+final class GPXParserDelegate: NSObject, XMLParserDelegate {
+    var coordinates: [CLLocationCoordinate2D] = []
+    
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {
+        if ["wpt", "trkpt", "rtept"].contains(elementName) {
+            if let latStr = attributeDict["lat"], let lonStr = attributeDict["lon"],
+               let lat = Double(latStr), let lon = Double(lonStr) {
+                coordinates.append(CLLocationCoordinate2D(latitude: lat, longitude: lon))
             }
         }
     }

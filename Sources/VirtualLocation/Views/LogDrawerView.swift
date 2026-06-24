@@ -18,7 +18,7 @@ struct LogDrawerView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(.ultraThinMaterial)
+        .nativeGlass(material: .popover, blendingMode: .withinWindow)
         .clipShape(
             RoundedRectangle(
                 cornerRadius: DS.Corner.panel,

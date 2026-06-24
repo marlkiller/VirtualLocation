@@ -192,6 +192,9 @@ struct MapView: NSViewRepresentable {
                     v?.annotation = annotation
                 }
 
+                // Remove existing pulse layer if any
+                v?.layer?.sublayers?.removeAll(where: { $0.name == "PulseLayer" })
+
                 switch la.kind {
                 case .active:
                     v?.markerTintColor = NSColor(.dsAccent)
@@ -199,6 +202,35 @@ struct MapView: NSViewRepresentable {
                     v?.glyphTintColor = .white
                     v?.animatesWhenAdded = true
                     v?.displayPriority = .required
+                    
+                    // Add pulse animation
+                    if let viewLayer = v?.layer {
+                        let pulseLayer = CALayer()
+                        pulseLayer.name = "PulseLayer"
+                        pulseLayer.bounds = CGRect(x: 0, y: 0, width: 60, height: 60)
+                        pulseLayer.position = CGPoint(x: viewLayer.bounds.midX, y: viewLayer.bounds.midY + 10)
+                        pulseLayer.cornerRadius = 30
+                        pulseLayer.backgroundColor = NSColor(.dsAccent).withAlphaComponent(0.4).cgColor
+                        pulseLayer.zPosition = -1 // Behind the marker
+                        
+                        let scaleAnim = CABasicAnimation(keyPath: "transform.scale")
+                        scaleAnim.fromValue = 0.5
+                        scaleAnim.toValue = 1.5
+                        
+                        let fadeAnim = CABasicAnimation(keyPath: "opacity")
+                        fadeAnim.fromValue = 1.0
+                        fadeAnim.toValue = 0.0
+                        
+                        let group = CAAnimationGroup()
+                        group.animations = [scaleAnim, fadeAnim]
+                        group.duration = 2.0
+                        group.repeatCount = .infinity
+                        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                        
+                        pulseLayer.add(group, forKey: "pulse")
+                        viewLayer.addSublayer(pulseLayer)
+                    }
+                    
                 case .selected:
                     v?.markerTintColor = NSColor(.dsWarning)
                     v?.glyphImage = NSImage(systemSymbolName: "mappin.and.ellipse", accessibilityDescription: nil)

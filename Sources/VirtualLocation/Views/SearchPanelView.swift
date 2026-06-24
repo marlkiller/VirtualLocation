@@ -9,6 +9,7 @@ struct SearchPanelView: View {
     var onSelectPreset: (LocationPreset) -> Void
 
     @State private var selectedTab: SearchTab = .search
+    @FocusState private var isSearchFocused: Bool
 
     enum SearchTab: String, CaseIterable {
         case search = "magnifyingglass"
@@ -32,7 +33,12 @@ struct SearchPanelView: View {
             contentArea
         }
         .frame(width: DS.Panel.width)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .nativeGlass(material: .sidebar, blendingMode: .behindWindow)
+        .background(
+            Button("") { isSearchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+        )
     }
 
     private var sidebarDivider: some View {
@@ -58,6 +64,7 @@ struct SearchPanelView: View {
                     .foregroundColor(.secondary)
 
                 TextField("搜索地址、地点、经纬度", text: $searchText)
+                    .focused($isSearchFocused)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .onSubmit {

@@ -112,6 +112,17 @@ struct ContentView: View {
                 }
                 .padding(.bottom, 8)
             }
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                if let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier("public.file-url") }) {
+                    provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { item, _ in
+                        if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil), url.pathExtension.lowercased() == "gpx" {
+                            Task { @MainActor in await service.loadGPX(from: url) }
+                        }
+                    }
+                    return true
+                }
+                return false
+            }
         }
         .ignoresSafeArea()
         .task { await initializeApp() }
@@ -126,12 +137,54 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             settingsSheet
         }
+        .background(
+            Group {
+                Button("") { Task { await service.setSelectedLocation() } }
+                    .keyboardShortcut(.return, modifiers: .command)
+                Button("") { 
+                    if let coord = service.mapSelection.selectedCoordinate ?? service.mapSelection.activeCoordinate {
+                        service.mapSelection.centerCoordinate = coord
+                    }
+                }
+                .keyboardShortcut(.space, modifiers: [])
+                
+                Button("") { fineTuneLocation(latOffset: 0.0001, lngOffset: 0) }
+                    .keyboardShortcut(.upArrow, modifiers: [])
+                Button("") { fineTuneLocation(latOffset: -0.0001, lngOffset: 0) }
+                    .keyboardShortcut(.downArrow, modifiers: [])
+                Button("") { fineTuneLocation(latOffset: 0, lngOffset: -0.0001) }
+                    .keyboardShortcut(.leftArrow, modifiers: [])
+                Button("") { fineTuneLocation(latOffset: 0, lngOffset: 0.0001) }
+                    .keyboardShortcut(.rightArrow, modifiers: [])
+            }
+            .opacity(0)
+        )
+    }
+
+    private func fineTuneLocation(latOffset: Double, lngOffset: Double) {
+        let baseCoord = service.mapSelection.selectedCoordinate ?? service.mapSelection.activeCoordinate
+        guard let current = baseCoord else { return }
+        let newCoord = CLLocationCoordinate2D(latitude: current.latitude + latOffset, longitude: current.longitude + lngOffset)
+        service.selectCoordinate(newCoord)
+        service.mapSelection.centerCoordinate = newCoord
+        
+        // If simulating and no selection, immediately apply to simulate continuous movement
+        if service.isSimulating && service.mapSelection.selectedCoordinate == nil {
+            if service.locationMode == .proxy {
+                Task { await service.applyProxyLocation(lat: newCoord.latitude, lng: newCoord.longitude) }
+            } else {
+                Task { await service.setLocation(lat: newCoord.latitude, lng: newCoord.longitude) }
+            }
+        }
     }
 
     private func initializeApp() async {
         service.addLog(.info, "Virtual Location 启动")
         await service.checkTool()
         await service.refreshDevices()
+        if service.locationMode == .proxy && service.proxySettings.autoStart {
+            await service.startProxy()
+        }
     }
 
     // MARK: - Map

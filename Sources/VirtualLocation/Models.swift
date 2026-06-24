@@ -33,6 +33,7 @@ extension LocationPreset {
         LocationPreset(name: "Apple Park", latitude: 37.3349, longitude: -122.0090, landmark: "Apple Park", region: "Cupertino, CA"),
         LocationPreset(name: "东京塔", latitude: 35.6586, longitude: 139.7454, landmark: "东京塔", region: "东京都港区"),
         LocationPreset(name: "天安门广场", latitude: 39.9042, longitude: 116.3974, landmark: "天安门城楼", region: "北京市东城区"),
+        LocationPreset(name: "公司", latitude: 39.966777, longitude: 116.375921, landmark: "王府井大街", region: "北京市东城区"),
         LocationPreset(name: "东方明珠塔", latitude: 31.2397, longitude: 121.4997, landmark: "东方明珠塔", region: "上海市浦东新区"),
     ]
 }
@@ -108,6 +109,55 @@ struct SearchHistoryItem: Identifiable, Codable {
     var coordinateString: String {
         String(format: "%.4f, %.4f", latitude, longitude)
     }
+}
+
+// MARK: - Location Mode
+enum LocationMode: String, CaseIterable, Codable {
+    case simple = "普通模式"
+    case proxy = "代理模式"
+
+    var icon: String {
+        switch self {
+        case .simple: return "antenna.radiowaves.left.and.right"
+        case .proxy:  return "network.badge.shield.half.filled"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .simple: return "通过 DVT 服务模拟位置"
+        case .proxy:  return "通过代理拦截 WLOC 响应"
+        }
+    }
+}
+
+// MARK: - Proxy State
+enum ProxyState: Equatable {
+    case stopped
+    case starting
+    case running(port: UInt16)
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .stopped:  return "未启动"
+        case .starting: return "启动中…"
+        case .running:  return "运行中"
+        case .failed:   return "失败"
+        }
+    }
+
+    var isActive: Bool {
+        if case .running = self { true } else { false }
+    }
+}
+
+// MARK: - Proxy Settings
+struct ProxySettings: Codable {
+    var port: UInt16 = 8888
+    var autoStart: Bool = false
+
+    static let `default` = ProxySettings()
 }
 
 // MARK: - Map Selection State

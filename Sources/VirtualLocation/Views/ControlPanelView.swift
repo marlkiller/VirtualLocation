@@ -25,6 +25,22 @@ struct ControlPanelView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
 
+                if service.locationMode == .proxy,
+                   case .running(let port) = service.proxyState,
+                   service.wlocPatchedCount > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 8))
+                            .foregroundColor(.dsSuccess)
+                        Text("代理已修补 \(service.wlocPatchedCount) 个位置")
+                            .font(.system(size: 8))
+                            .foregroundColor(.dsSuccess)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+                }
+
                 PanelDivider()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -35,7 +51,7 @@ struct ControlPanelView: View {
             }
         }
         .frame(width: 240)
-        .background(.ultraThinMaterial)
+        .nativeGlass(material: .popover, blendingMode: .withinWindow)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
     }
@@ -62,6 +78,15 @@ struct ControlPanelView: View {
                 .buttonStyle(.plain)
                 .help("居中到选定位置")
             }
+
+            // Show current mode badge
+            Text(service.locationMode.rawValue)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundColor(service.locationMode == .proxy ? .dsWarning : .dsAccent)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background((service.locationMode == .proxy ? Color.dsWarning : Color.dsAccent).opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 3))
         }
     }
 
@@ -109,8 +134,14 @@ struct ControlPanelView: View {
 
     private var actionButtonsSection: some View {
         VStack(spacing: 6) {
-            if case .connected = service.tunnelState {
-                locationActions
+            if service.locationMode == .proxy {
+                if case .running = service.proxyState {
+                    locationActionButton
+                } else {
+                    proxyNotReadyNotice
+                }
+            } else if case .connected = service.tunnelState {
+                locationActionButton
             } else {
                 tunnelRequiredNotice
             }
@@ -120,6 +151,51 @@ struct ControlPanelView: View {
                            disabled: !hasSelection)
                 tinyButton(icon: "doc.on.doc", label: "复制", action: onCopyCoordinates,
                            disabled: !hasSelection && !isSimulating)
+
+                if service.locationMode == .simple {
+                    Button(action: { service.enableJittering.toggle() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "cellularbars")
+                                .font(.system(size: 9))
+                            Text("防检测")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background(service.enableJittering ? Color.dsSuccess.opacity(0.15) : Color.primary.opacity(0.06))
+                        .foregroundColor(service.enableJittering ? .dsSuccess : .primary)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("开启随机抖动以防止应用检测")
+                }
+            }
+        }
+    }
+
+    private var locationActionButton: some View {
+        Group {
+            switch service.locationState {
+            case .setting:
+                loadingBadge(text: "定位中…", color: .dsAccent)
+            case .clearing:
+                loadingBadge(text: "恢复中…", color: .dsError)
+            default:
+                Button(action: onApplyLocation) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 10))
+                        Text(isSimulating ? "更新定位" : "应用定位")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(!hasSelection ? Color.secondary.opacity(0.2) : Color.dsAccent)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasSelection)
             }
         }
     }
@@ -138,31 +214,18 @@ struct ControlPanelView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
-    private var locationActions: some View {
-        Group {
-            switch service.locationState {
-            case .setting:
-                loadingBadge(text: "定位中…", color: .dsAccent)
-            case .clearing:
-                loadingBadge(text: "恢复中…", color: .dsError)
-            default:
-                Button(action: onApplyLocation) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 10))
-                        Text("应用定位")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(!hasSelection ? Color.secondary.opacity(0.2) : Color.dsAccent)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .disabled(!hasSelection)
-            }
+    private var proxyNotReadyNotice: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "network.slash")
+                .font(.system(size: 9))
+            Text("代理未就绪")
+                .font(.system(size: 10, weight: .medium))
         }
+        .foregroundColor(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func loadingBadge(text: String, color: Color) -> some View {

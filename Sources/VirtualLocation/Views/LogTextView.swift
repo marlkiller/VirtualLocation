@@ -47,16 +47,18 @@ struct LogTextView: NSViewRepresentable {
         let attr = NSMutableAttributedString()
 
         for entry in logs {
+            let isWloc = entry.message.contains("WLOC") || entry.message.contains("gs-loc")
             let color: NSColor = {
                 switch entry.level {
                 case .cmd:  return .systemBlue
                 case .out:  return .labelColor
                 case .err:  return .systemRed
-                case .info: return .secondaryLabelColor
+                case .info: return isWloc ? .systemOrange : .secondaryLabelColor
                 }
             }()
+            let weight: NSFont.Weight = isWloc ? .bold : .regular
             let line = NSAttributedString(string: entry.formatted + "\n", attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: weight),
                 .foregroundColor: color,
             ])
             attr.append(line)
