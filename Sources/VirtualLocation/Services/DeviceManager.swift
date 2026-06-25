@@ -35,7 +35,7 @@ final class DeviceManager {
         let lines = raw.split(separator: "\n").map(String.init)
         var devices: [DetectedDevice] = []
         var offline = false
-        let pattern = try! NSRegularExpression(pattern: #"(.+?)\s+\(([\d.]+)\)\s+\((00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16})\)"#)
+        let pattern = try! NSRegularExpression(pattern: #"(.+?)\s+\(([\d.]+)\)\s+(?:- .+?\s+)?\((00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16})\)"#)
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty, !trimmed.hasPrefix("==") else {

@@ -86,9 +86,10 @@ struct TopToolbarView: View {
                 if hasDevice {
                     Text(deviceLabel)
                         .font(.system(size: TBFont.label, weight: .medium))
-                        .foregroundColor(.primary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                 } else {
                     Menu {
                         Button(action: { onSelectDevice("") }) {
@@ -106,7 +107,7 @@ struct TopToolbarView: View {
                             Button(action: { onSelectDevice(dev.udid) }) {
                                 HStack(spacing: 6) {
                                     Text(dev.isOffline ? "\(dev.name) (离线)" : "\(dev.name) (iOS \(dev.osVersion))")
-                                        .foregroundColor(dev.isOffline ? .secondary : .primary)
+                                        .foregroundColor(dev.isOffline ? .secondary : nil)
                                     if dev.udid == service.selectedDeviceUdid {
                                         Spacer()
                                         Image(systemName: "checkmark")
@@ -120,7 +121,6 @@ struct TopToolbarView: View {
                         HStack(spacing: 4) {
                             Text(deviceLabel)
                                 .font(.system(size: TBFont.label, weight: .medium))
-                                .foregroundColor(.primary)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: TBFont.micro))
                                 .foregroundColor(.secondary)
@@ -131,7 +131,6 @@ struct TopToolbarView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                     .fixedSize()
-                    .disabled(isRefreshing)
                 }
             } else {
                 VStack(alignment: .leading, spacing: 0) {
@@ -181,13 +180,18 @@ struct TopToolbarView: View {
                 }
             }
 
-            Button(action: onRefreshDevice) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: TBFont.icon, weight: .medium))
+            if isRefreshing {
+                ProgressView()
+                    .scaleEffect(0.45)
+                    .frame(width: 22, height: 22)
+            } else {
+                Button(action: onRefreshDevice) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: TBFont.icon, weight: .medium))
+                }
+                .buttonStyle(.iconButton(size: 22))
+                .help("刷新设备")
             }
-            .buttonStyle(.iconButton(size: 22))
-            .help("刷新设备")
-            .disabled(isRefreshing)
         }
     }
 

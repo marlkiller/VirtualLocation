@@ -33,7 +33,7 @@ extension LocationPreset {
         LocationPreset(name: "Apple Park", latitude: 37.3349, longitude: -122.0090, landmark: "Apple Park", region: "Cupertino, CA"),
         LocationPreset(name: "东京塔", latitude: 35.6586, longitude: 139.7454, landmark: "东京塔", region: "东京都港区"),
         LocationPreset(name: "天安门广场", latitude: 39.9042, longitude: 116.3974, landmark: "天安门城楼", region: "北京市东城区"),
-        LocationPreset(name: "公司", latitude: 39.966777, longitude: 116.375921, landmark: "王府井大街", region: "北京市东城区"),
+        LocationPreset(name: "测试", latitude: 39.966777, longitude: 116.375921, landmark: "王府井大街", region: "北京市东城区"),
         LocationPreset(name: "东方明珠塔", latitude: 31.2397, longitude: 121.4997, landmark: "东方明珠塔", region: "上海市浦东新区"),
     ]
 }

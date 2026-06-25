@@ -178,14 +178,14 @@ final class LocationService: ObservableObject {
             proxyState = .running(port: port)
 
             let ip = getLocalIPAddress() ?? "本机IP"
-            addLog(.info, "━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            addLog(.info, "✅ 代理服务器已启动 :\(port)")
-            addLog(.info, "━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            addLog(.info, "📱 代理设置 — HTTP 代理: \(ip):\(port)")
-            addLog(.info, "")
-            addLog(.info, "🔐 证书下载 — Safari 访问:")
-            addLog(.info, "   http://\(ip):\(port)")
-            addLog(.info, "   页面内有下载按钮和安装说明")
+            addLog(.cmd, "✅ 代理已启动 :\(port)")
+            addLog(.cmd, "   iPhone 配置步骤:")
+            addLog(.cmd, "   ① WiFi 代理 → \(ip):\(port)")
+            addLog(.cmd, "   ② Safari → http://\(ip):\(port)")
+            addLog(.cmd, "      下载描述文件 → 设置 → 安装")
+            addLog(.cmd, "   ③ 设置 → 通用 → 关于本机 → 证书信任设置 → 开启")
+            addLog(.cmd, "   ④ App 选位置 → 点「应用」")
+            addLog(.cmd, "   ⑤ iPhone 开关定位服务 → 打开目标 App")
             status = AppStatus.info("代理运行于 \(ip):\(port)")
 
         } catch {

@@ -168,13 +168,12 @@ final class ProxyServer {
             close(clientFd)
         }
 
+        var targetInfo = ""
         do {
-            // Set socket timeout
             var tv = timeval(tv_sec: 30, tv_usec: 0)
             setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
             setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
-            // Read the initial request bytes (accept both \r\n and \n line endings)
             let rawData = try readRequestBytes(from: clientFd)
             guard let requestStr = String(data: rawData, encoding: .utf8) else {
                 throw ProxyError.invalidUTF8
@@ -187,6 +186,7 @@ final class ProxyServer {
 
             let method = parts[0].uppercased()
             let target = parts[1]
+            targetInfo = "\(method) \(target)"
 
             if method == "CONNECT" {
                 let hostPort = target.components(separatedBy: ":")
@@ -209,7 +209,8 @@ final class ProxyServer {
         } catch {
             let msg = error.localizedDescription
             if !msg.isEmpty {
-                config.onLog?(.err, "代理处理失败: \(msg)")
+                let full = targetInfo.isEmpty ? msg : "[\(targetInfo)] \(msg)"
+                print("[VirtualLocation] 代理错误: \(full)")
             }
         }
     }
@@ -661,6 +662,7 @@ final class ProxyServer {
 
     private func log(_ level: LogEntry.Level, _ msg: String) {
         config.onLog?(level, "[代理] \(msg)")
+        print("[VirtualLocation] [代理] \(msg)")
     }
 }
 
