@@ -37,6 +37,8 @@ final class LocationService: ObservableObject {
         didSet { saveProxySettings() }
     }
     @Published var wlocPatchedCount: Int = 0
+    @Published var showPasswordInput: Bool = false
+    @Published var passwordInputValue: String = ""
 
     var allPresets: [LocationPreset] { LocationPreset.builtin + customPresets }
 
@@ -118,6 +120,27 @@ final class LocationService: ObservableObject {
 
     // MARK: - Proxy Mode
 
+    private func getLocalIPAddress() -> String? {
+        var address: String?
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        defer { freeifaddrs(ifaddr) }
+
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let name = String(cString: ptr.pointee.ifa_name)
+            if name == "en0" || name == "en1" {
+                let family = ptr.pointee.ifa_addr.pointee.sa_family
+                if family == UInt8(AF_INET) {
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    getnameinfo(ptr.pointee.ifa_addr, socklen_t(ptr.pointee.ifa_addr.pointee.sa_len),
+                                &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
+                    address = String(cString: hostname)
+                }
+            }
+        }
+        return address
+    }
+
     func startProxy() async {
         guard locationMode == .proxy else { return }
 
@@ -152,10 +175,13 @@ final class LocationService: ObservableObject {
             try server.start()
             self.proxyServer = server
             proxyState = .running(port: port)
-            addLog(.info, "✅ 代理服务器运行于端口 \(port)")
-            addLog(.info, "📱 在 iOS 设备 Wi-Fi 设置中配置 HTTP 代理为: 本机IP:\(port)")
-            addLog(.info, "🔐 安装 CA: 访问 http://本机IP:\(port)/ca 下载并信任证书")
-            status = AppStatus.info("代理已启动 :\(port)")
+
+            let ip = getLocalIPAddress() ?? "本机IP"
+            addLog(.info, "✅ 代理服务器已启动")
+            addLog(.info, "📍 地址: \(ip):\(port)")
+            addLog(.info, "📱 代理设置: HTTP 代理 → \(ip):\(port)")
+            addLog(.info, "🔐 CA 证书: http://\(ip):\(port)/ca.pem")
+            status = AppStatus.info("代理运行于 \(ip):\(port)")
 
         } catch {
             proxyState = .failed(error.localizedDescription)
@@ -519,11 +545,21 @@ final class LocationService: ObservableObject {
 
         tunnelState = .starting
         status = AppStatus.info("正在启动 Tunneld …")
-        addLog(.info, "启动 Tunneld 需要管理员权限，请在弹窗中输入密码")
+
+        // Show password input if not yet provided
+        guard !passwordInputValue.isEmpty else {
+            showPasswordInput = true
+            tunnelState = .disconnected
+            status = AppStatus.info("请输入管理员密码")
+            return
+        }
+
+        addLog(.info, "启动 Tunneld 需要管理员权限…")
         addLog(.cmd, "执行: sudo \(pmd3Path) remote tunneld --daemonize")
 
+        let escapedPassword = passwordInputValue.replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
-        do shell script "\(pmd3Path) remote tunneld --daemonize" with administrator privileges
+        do shell script "\(pmd3Path) remote tunneld --daemonize" with administrator privileges password "\(escapedPassword)"
         """
 
         let asProc = Process()
@@ -551,6 +587,10 @@ final class LocationService: ObservableObject {
                         } else {
                             let msg = (errOut.isEmpty ? output : errOut)
                                 .trimmingCharacters(in: .whitespacesAndNewlines)
+                            // Clear password on error (wrong password)
+                            if msg.lowercased().contains("password") || msg.lowercased().contains("invalid") {
+                                self.passwordInputValue = ""
+                            }
                             self.tunnelState = .failed(msg)
                             self.addLog(.err, "Tunneld 启动失败: \(msg)")
                             self.status = AppStatus.error("Tunneld 启动失败")
@@ -579,6 +619,19 @@ final class LocationService: ObservableObject {
         locationState = .idle
         addLog(.info, "Tunneld 已停止")
         status = AppStatus.info("Tunneld 已断开")
+    }
+
+    func confirmPassword(_ password: String) {
+        passwordInputValue = password
+        showPasswordInput = false
+        Task { await startTunneld() }
+    }
+
+    func cancelPasswordInput() {
+        showPasswordInput = false
+        passwordInputValue = ""
+        tunnelState = .disconnected
+        status = AppStatus.info("已取消")
     }
 
     // MARK: - Location

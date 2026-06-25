@@ -41,12 +41,12 @@ struct TopToolbarView: View {
 
             toggleSearchButton
             separator
+            modePicker
+            separator
             if service.locationMode == .simple {
                 deviceSection
                 separator
             }
-            modePicker
-            separator
             connectionSection
             separator
             statusSection

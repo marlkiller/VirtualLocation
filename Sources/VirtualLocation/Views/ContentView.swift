@@ -182,6 +182,17 @@ struct ContentView: View {
             }
             .opacity(0)
         )
+        .sheet(isPresented: $service.showPasswordInput) {
+            PasswordInputView(
+                password: $service.passwordInputValue,
+                onConfirm: { password in
+                    service.confirmPassword(password)
+                },
+                onCancel: {
+                    service.cancelPasswordInput()
+                }
+            )
+        }
     }
 
     private func fineTuneLocation(latOffset: Double, lngOffset: Double) {
