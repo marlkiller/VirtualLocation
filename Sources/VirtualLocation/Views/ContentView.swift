@@ -19,19 +19,15 @@ struct ContentView: View {
         VStack(spacing: 0) {
             TopToolbarView(
                 service: service,
-                onStartSimulation: { Task { await service.setSelectedLocation() } },
-                onStopSimulation: { Task { await service.clearLocation() } },
                 onRefreshDevice: { Task { await service.refreshDevices() } },
-                onStartTunnel: { Task { await service.startTunneld() } },
-                onStopTunnel: { Task { await service.stopTunneld() } },
                 onToggleSearchPanel: {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.95)) {
                         showSearchPanel.toggle()
                     }
                 },
+                onSelectDevice: { udid in service.selectDevice(udid: udid) },
                 onInstallTunnel: { Task { await service.installDependencies() } },
-                onUninstallTunnel: { Task { await service.uninstallDependencies() } },
-                onSelectDevice: { udid in service.selectDevice(udid: udid) }
+                onUninstallTunnel: { Task { await service.uninstallDependencies() } }
             )
 
             HStack(spacing: 0) {
@@ -195,9 +191,9 @@ struct ContentView: View {
         let newCoord = CLLocationCoordinate2D(latitude: current.latitude + latOffset, longitude: current.longitude + lngOffset)
         service.selectCoordinate(newCoord)
         service.mapSelection.centerCoordinate = newCoord
-        
-        // If simulating and no selection, immediately apply to simulate continuous movement
-        if service.isSimulating && service.mapSelection.selectedCoordinate == nil {
+
+        // If simulating, immediately apply to simulate continuous movement
+        if service.isSimulating {
             if service.locationMode == .proxy {
                 Task { await service.applyProxyLocation(lat: newCoord.latitude, lng: newCoord.longitude) }
             } else {
@@ -209,9 +205,8 @@ struct ContentView: View {
     private func initializeApp() async {
         service.addLog(.info, "Virtual Location 启动")
         await service.checkTool()
-        if service.locationMode == .simple {
-            await service.refreshDevices()
-        }
+        // No longer need to refresh devices for simple mode
+        // since we use --userspace for direct connection
         if service.locationMode == .proxy && service.proxySettings.autoStart {
             await service.startProxy()
         }

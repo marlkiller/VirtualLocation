@@ -65,6 +65,7 @@ enum ToolState: Equatable {
     case missing
     case present(String)
     case installing
+    case uninstalling
 }
 
 // MARK: - Log Entry

@@ -10,15 +10,11 @@ private enum TBFont {
 
 struct TopToolbarView: View {
     @ObservedObject var service: LocationService
-    var onStartSimulation: () -> Void
-    var onStopSimulation: () -> Void
     var onRefreshDevice: () -> Void
-    var onStartTunnel: () -> Void
-    var onStopTunnel: () -> Void
     var onToggleSearchPanel: () -> Void
+    var onSelectDevice: (String) -> Void
     var onInstallTunnel: () -> Void
     var onUninstallTunnel: () -> Void
-    var onSelectDevice: (String) -> Void
 
     @State private var pulseAnim = false
 
@@ -207,117 +203,77 @@ struct TopToolbarView: View {
         service.locationMode = mode
     }
 
-    // MARK: - Connection (Tunnel or Proxy)
+    // MARK: - Connection
 
     @ViewBuilder
     private var connectionSection: some View {
         if service.locationMode == .simple {
-            tunnelSection
+            simpleModeSection
         } else {
             proxySection
         }
     }
 
-    // MARK: - Tunnel
+    // MARK: - Simple Mode (pymobiledevice3 control)
 
-    private var tunnelSection: some View {
+    private var simpleModeSection: some View {
         HStack(spacing: 5) {
             Image(systemName: "cable.connector")
-                .font(.system(size: TBFont.icon))
-                .foregroundColor(tunnelColor)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
 
             VStack(alignment: .leading, spacing: 0) {
-                Text("Tunneld")
-                    .font(.system(size: TBFont.label, weight: .medium))
+                Text("pymobiledevice3")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.primary)
-                Text(tunnelLabel)
-                    .font(.system(size: TBFont.subtitle))
-                    .foregroundColor(tunnelColor)
+                Text(pmd3Status)
+                    .font(.system(size: 8))
+                    .foregroundColor(pmd3StatusColor)
             }
 
-            if case .installing = service.tunnelInstallState {
-                HStack(spacing: 4) {
-                    ProgressView()
-                        .scaleEffect(0.4)
-                        .frame(width: 8, height: 8)
-                    Text("安装中…")
-                        .font(.system(size: TBFont.button))
-                        .foregroundColor(.dsWarning)
-                }
-            } else if case .uninstalling = service.tunnelInstallState {
-                HStack(spacing: 4) {
-                    ProgressView()
-                        .scaleEffect(0.4)
-                        .frame(width: 8, height: 8)
-                    Text("卸载中…")
-                        .font(.system(size: TBFont.button))
-                        .foregroundColor(.dsWarning)
-                }
-            } else if case .missing = service.toolState {
-                installButton
-            } else {
-                HStack(spacing: 3) {
-                    tunnelActionButton
-                    uninstallButton
-                }
-            }
+            pmd3ActionButton
+        }
+    }
+
+    private var pmd3Status: String {
+        switch service.toolState {
+        case .checking: return "检测中…"
+        case .present: return "已就绪"
+        case .missing: return "未安装"
+        case .installing: return "安装中…"
+        case .uninstalling: return "卸载中…"
+        }
+    }
+
+    private var pmd3StatusColor: Color {
+        switch service.toolState {
+        case .checking: return .secondary
+        case .present: return .dsSuccess
+        case .missing: return .dsError
+        case .installing: return .dsWarning
+        case .uninstalling: return .dsWarning
         }
     }
 
     @ViewBuilder
-    private var installButton: some View {
-        Button(action: onInstallTunnel) {
-            Text("安装")
-                .font(.system(size: TBFont.button, weight: .semibold))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color.dsAccent)
-                .foregroundColor(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help("安装 pymobiledevice3")
-    }
-
-    @ViewBuilder
-    private var uninstallButton: some View {
-        Button(action: onUninstallTunnel) {
-            Text("卸载")
-                .font(.system(size: TBFont.button, weight: .semibold))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color.dsError.opacity(0.12))
-                .foregroundColor(.dsError)
-                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .help("卸载 pymobiledevice3")
-    }
-
-    @ViewBuilder
-    private var tunnelActionButton: some View {
-        switch service.tunnelState {
-        case .disconnected:
-            Button(action: onStartTunnel) {
-                Text("启动")
-                    .font(.system(size: TBFont.button, weight: .semibold))
+    private var pmd3ActionButton: some View {
+        switch service.toolState {
+        case .missing:
+            Button(action: onInstallTunnel) {
+                Text("安装")
+                    .font(.system(size: 9, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(service.canStartTunnel ? Color.dsAccent : Color.secondary.opacity(0.15))
-                    .foregroundColor(service.canStartTunnel ? .white : .secondary)
+                    .background(Color.dsAccent)
+                    .foregroundColor(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             }
             .buttonStyle(.plain)
-            .disabled(!service.canStartTunnel)
-            .help("启动 Tunneld")
-        case .starting:
-            ProgressView()
-                .scaleEffect(0.4)
-                .frame(width: 32)
-        case .connected:
-            Button(action: onStopTunnel) {
-                Text("停止")
-                    .font(.system(size: TBFont.button, weight: .semibold))
+            .help("安装 pymobiledevice3")
+        default:
+            Button(action: onUninstallTunnel) {
+                Text("卸载")
+                    .font(.system(size: 9, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsError.opacity(0.12))
@@ -325,37 +281,7 @@ struct TopToolbarView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             }
             .buttonStyle(.plain)
-            .help("停止 Tunneld")
-        case .failed:
-            Button(action: onStartTunnel) {
-                Text("重试")
-                    .font(.system(size: TBFont.button, weight: .semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.dsWarning)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .help("重试 Tunneld")
-        }
-    }
-
-    private var tunnelColor: Color {
-        switch service.tunnelState {
-        case .disconnected: return .secondary
-        case .starting: return .dsWarning
-        case .connected: return .dsSuccess
-        case .failed: return .dsError
-        }
-    }
-
-    private var tunnelLabel: String {
-        switch service.tunnelState {
-        case .disconnected: return "未启动"
-        case .starting: return "启动中…"
-        case .connected: return "已连接"
-        case .failed: return "失败"
+            .help("卸载 pymobiledevice3")
         }
     }
 
@@ -541,7 +467,7 @@ struct TopToolbarView: View {
         HStack(spacing: 5) {
             switch service.locationState {
             case .active:
-                Button(action: onStopSimulation) {
+                Button(action: { Task { await service.clearLocation() } }) {
                     Label("恢复", systemImage: "arrow.counterclockwise")
                         .font(.system(size: 10, weight: .semibold))
                 }

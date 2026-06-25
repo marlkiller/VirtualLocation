@@ -313,10 +313,6 @@ final class LocationService: ObservableObject {
     // MARK: - Tool
 
     func checkTool() async {
-        guard locationMode == .simple else {
-            toolState = .present(pmd3Path)
-            return
-        }
         toolState = .checking
         addLog(.info, "检测 pymobiledevice3 …")
         if FileManager.default.isExecutableFile(atPath: pmd3Path) {
@@ -471,6 +467,8 @@ final class LocationService: ObservableObject {
         selectedDeviceUdid = udid
         if let dev = detectedDevices.first(where: { $0.udid == udid }) {
             addLog(.info, "已选择设备: \(dev.name)")
+            // Auto-connect to the selected device
+            Task { await connectToDevice() }
         }
     }
 
@@ -486,11 +484,10 @@ final class LocationService: ObservableObject {
 
         status = AppStatus.info("正在验证设备 \(dev.name) …")
 
-        // Use `lockdown get --key UniqueDeviceID` which returns just the UDID
-        // as a JSON string. Compare it against the requested UDID to confirm
-        // we reached the correct device.
+        // Use `lockdown get --key UniqueDeviceID` with --userspace environment
+        // to support both USB and WiFi-connected devices on iOS 17+
         let (ok, output) = await launchDVTWithTimeout(
-            args: ["lockdown", "get", "--key", "UniqueDeviceID", "--udid", udid],
+            args: ["lockdown", "get", "--key", "UniqueDeviceID"],
             timeout: 5)
 
         let returnedUdid = output
@@ -499,7 +496,7 @@ final class LocationService: ObservableObject {
 
         if ok && returnedUdid.caseInsensitiveCompare(udid) == .orderedSame {
             device = DeviceInfo(id: dev.udid, name: dev.name, osVersion: dev.osVersion)
-            addLog(.info, "✅ 设备已就绪 (USB): \(dev.name)")
+            addLog(.info, "✅ 设备已就绪: \(dev.name)")
             status = AppStatus.info("已连接: \(dev.name)")
         } else if ok {
             addLog(.err, "UDID 不匹配: 请求 \(udid), 返回 \(returnedUdid)")
@@ -510,149 +507,23 @@ final class LocationService: ObservableObject {
         }
     }
 
-    // MARK: - Tunneld
+    // MARK: - Connection (no longer used)
 
     func startTunneld() async {
-        guard case .present = toolState else {
-            status = AppStatus.error("请先安装依赖"); return
-        }
-        guard tunnelState != .starting, tunnelState != .connected else { return }
-
-        tunnelState = .starting
-        status = AppStatus.info("正在启动 Tunneld …")
-
-        if device == nil {
-            await connectToDevice()
-        }
-
-        // Need at least a selected UDID to try tunnel
-        guard let udid = selectedDeviceUdid,
-              let detectedDev = detectedDevices.first(where: { $0.udid == udid }) else {
-            tunnelState = .disconnected
-            status = AppStatus.error("请先选择设备")
-            return
-        }
-
-        // Show password input if not yet provided
-        guard !passwordInputValue.isEmpty else {
-            showPasswordInput = true
-            tunnelState = .disconnected
-            status = AppStatus.info("请输入管理员密码")
-            return
-        }
-
-        addLog(.info, "启动 Tunneld 需要管理员权限…")
-        addLog(.cmd, "执行: sudo \(pmd3Path) remote tunneld --daemonize")
-
-        let escapedPassword = passwordInputValue.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = """
-        do shell script "\(pmd3Path) remote tunneld --daemonize" with administrator privileges password "\(escapedPassword)"
-        """
-
-        let asProc = Process()
-        asProc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        asProc.arguments = ["-e", script]
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        asProc.standardOutput = outPipe
-        asProc.standardError = errPipe
-
-        do {
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                asProc.terminationHandler = { proc in
-                    let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    let errOut = String(data: errData, encoding: .utf8) ?? ""
-                    Task { @MainActor in
-                        if proc.terminationStatus == 0 {
-                            self.addLog(.info, "✅ Tunneld 已启动")
-                            try? await Task.sleep(nanoseconds: 3_000_000_000)
-
-                            // Verify device tunnel is active
-                            let verifyUdid = self.device?.id ?? udid
-                            let verifyName = self.device?.name ?? detectedDev.name
-                            self.addLog(.info, "验证设备隧道: \(verifyName)...")
-                            let (verified, verifyOutput) = await self.launchDVTWithTimeout(
-                                args: ["lockdown", "info", "--tunnel", "", "--udid", verifyUdid],
-                                timeout: 10)
-                            if verified && verifyOutput.localizedCaseInsensitiveContains(verifyUdid) {
-                                if self.device == nil {
-                                    self.device = DeviceInfo(id: detectedDev.udid, name: detectedDev.name, osVersion: detectedDev.osVersion)
-                                }
-                                self.addLog(.info, "✅ 设备隧道已连接: \(verifyName)")
-                            } else if verified {
-                                // lockdown succeeded but for a different device
-                                self.tunnelState = .failed("隧道连接了其他设备，非 \(verifyName)")
-                                self.addLog(.err, "隧道验证失败: 期望 UDID \(verifyUdid), 返回: \(String(verifyOutput.prefix(300)))")
-                                self.status = AppStatus.error("设备 \(verifyName) 验证失败")
-                                cont.resume()
-                                return
-                            } else {
-                                self.tunnelState = .failed("设备 \(verifyName) 无响应")
-                                self.addLog(.err, "设备 \(verifyName) 无法连接: \(verifyOutput)")
-                                self.status = AppStatus.error("设备 \(verifyName) 无法连接")
-                                cont.resume()
-                                return
-                            }
-
-                            self.tunnelState = .connected
-                            self.status = AppStatus.info("✅ Tunneld 就绪")
-                            cont.resume()
-                        } else {
-                            let msg = (errOut.isEmpty ? output : errOut)
-                                .trimmingCharacters(in: .whitespacesAndNewlines)
-                            // Clear password on error (wrong password)
-                            if msg.lowercased().contains("password") || msg.lowercased().contains("invalid") {
-                                self.passwordInputValue = ""
-                            }
-                            self.tunnelState = .failed(msg)
-                            self.addLog(.err, "Tunneld 启动失败: \(msg)")
-                            self.status = AppStatus.error("Tunneld 启动失败")
-                            cont.resume(throwing: LocationError.tunnelError(msg))
-                        }
-                    }
-                }
-                do { try asProc.run() } catch { cont.resume(throwing: error) }
-            }
-        } catch {
-            tunnelState = .disconnected
-            addLog(.err, "启动异常: \(error.localizedDescription)")
-            status = AppStatus.error("Tunneld 启动失败")
-        }
+        // Legacy - no longer used, kept for UI compatibility
+        tunnelState = .connected
+        status = AppStatus.info("✅ 设备已就绪")
     }
 
     func stopTunneld() async {
-        dvtTask?.terminate()
-        dvtTask = nil
-
-        if !passwordInputValue.isEmpty {
-            let escapedPassword = passwordInputValue.replacingOccurrences(of: "\"", with: "\\\"")
-            let script = """
-            do shell script "pkill -f tunneld" with administrator privileges password "\(escapedPassword)"
-            """
-            let asProc = Process()
-            asProc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            asProc.arguments = ["-e", script]
-            try? asProc.run()
-            asProc.waitUntilExit()
-        } else {
-            let killTask = Process()
-            killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-            killTask.arguments = ["-f", "tunneld"]
-            try? killTask.run()
-        }
-
+        // Legacy - no longer used, kept for UI compatibility
         tunnelState = .disconnected
-        locationState = .idle
-        addLog(.info, "Tunneld 已停止")
-        status = AppStatus.info("Tunneld 已断开")
+        status = AppStatus.info("已断开")
     }
 
     func confirmPassword(_ password: String) {
-        passwordInputValue = password
         showPasswordInput = false
-        Task { await startTunneld() }
+        // No longer needed - we use --userspace for direct connection
     }
 
     func cancelPasswordInput() {
@@ -691,9 +562,6 @@ final class LocationService: ObservableObject {
         guard let dev = device else {
             status = AppStatus.error("请先连接设备"); return
         }
-        guard case .connected = tunnelState else {
-            status = AppStatus.error("请先启动 Tunneld"); return
-        }
 
         locationState = .setting
 
@@ -709,11 +577,16 @@ final class LocationService: ObservableObject {
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: pmd3Path)
+        // Use userspace environment for both USB and WiFi-connected devices
+        task.environment = ["PYMOBILEDEVICE3_USERSPACE": "1"]
         task.arguments = ["developer", "dvt", "simulate-location", "set",
-                          "--tunnel", dev.id, "--", latStr, lngStr]
+                          "--udid", dev.id, "--", latStr, lngStr]
+
+        // Capture stderr for error logging
         let errPipe = Pipe()
         task.standardOutput = FileHandle.nullDevice
         task.standardError = errPipe
+
         task.terminationHandler = { [weak self] proc in
             let errData = try? errPipe.fileHandleForReading.readToEnd()
             let errStr = errData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
@@ -790,9 +663,8 @@ final class LocationService: ObservableObject {
         locationState = .clearing
         status = AppStatus.info("正在恢复真实位置…")
 
-        let (success, output) = await launchDVTWithTimeout(
-            args: ["developer", "dvt", "simulate-location", "clear",
-                   "--tunnel", dev.id],
+        let (success, output) = await self.launchDVTWithTimeout(
+            args: ["developer", "dvt", "simulate-location", "clear", "--udid", dev.id],
             timeout: 10)
         if success {
             if !output.isEmpty { addLog(.out, output) }
@@ -812,6 +684,10 @@ final class LocationService: ObservableObject {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: pmd3Path)
         task.arguments = args
+        // Inherit default environment and add userspace flag
+        var env = ProcessInfo.processInfo.environment
+        env["PYMOBILEDEVICE3_USERSPACE"] = "1"
+        task.environment = env
 
         let outPipe = Pipe()
         let errPipe = Pipe()
