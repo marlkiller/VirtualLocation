@@ -169,9 +169,15 @@ final class CertificateManager {
         }
 
         let p12Data = try Data(contentsOf: url)
-        let options: [String: Any] = [
+        var options: [String: Any] = [
             kSecImportExportPassphrase as String: p12Password
         ]
+
+        // Set permissive access to avoid keychain prompts during TLS handshake
+        var access: SecAccess?
+        if SecAccessCreate("VirtualLocation CA" as CFString, nil, &access) == errSecSuccess, let access {
+            options[kSecImportExportAccess as String] = access
+        }
 
         var items: CFArray?
         let status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
