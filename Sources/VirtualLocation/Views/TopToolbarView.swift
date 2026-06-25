@@ -1,5 +1,13 @@
 import SwiftUI
 
+private enum TBFont {
+    static let icon: CGFloat = 11
+    static let label: CGFloat = 11
+    static let subtitle: CGFloat = 9
+    static let button: CGFloat = 10
+    static let micro: CGFloat = 8
+}
+
 struct TopToolbarView: View {
     @ObservedObject var service: LocationService
     var onStartSimulation: () -> Void
@@ -8,12 +16,24 @@ struct TopToolbarView: View {
     var onStartTunnel: () -> Void
     var onStopTunnel: () -> Void
     var onToggleSearchPanel: () -> Void
+    var onInstallTunnel: () -> Void
+    var onUninstallTunnel: () -> Void
+    var onSelectDevice: (String) -> Void
 
     @State private var pulseAnim = false
 
     private var isSimulating: Bool { service.isSimulating }
     private var hasDevice: Bool { service.device != nil }
-    private var deviceName: String { service.device?.shortName ?? "未检测到设备" }
+    private var deviceName: String { service.device?.shortName ?? "未选择" }
+    private var hasDetectedDevices: Bool { service.detectedDevices.count > 0 }
+    private var isRefreshing: Bool { service.isRefreshingDevices }
+    private var deviceLabel: String {
+        if let udid = service.selectedDeviceUdid,
+           let dev = service.detectedDevices.first(where: { $0.udid == udid }) {
+            return dev.name
+        }
+        return "选择设备…"
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -21,8 +41,10 @@ struct TopToolbarView: View {
 
             toggleSearchButton
             separator
-            deviceSection
-            separator
+            if service.locationMode == .simple {
+                deviceSection
+                separator
+            }
             modePicker
             separator
             connectionSection
@@ -48,7 +70,7 @@ struct TopToolbarView: View {
     private var toggleSearchButton: some View {
         Button(action: onToggleSearchPanel) {
             Image(systemName: "sidebar.left")
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: TBFont.icon, weight: .medium))
                 .foregroundColor(.secondary)
         }
         .buttonStyle(.iconButton(size: 26))
@@ -60,30 +82,74 @@ struct TopToolbarView: View {
     private var deviceSection: some View {
         HStack(spacing: 6) {
             Image(systemName: "iphone.gen3")
-                .font(.system(size: 12))
+                .font(.system(size: TBFont.icon))
                 .foregroundColor(hasDevice ? .dsSuccess : .secondary)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(deviceName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                    .frame(maxWidth: 100, alignment: .leading)
-                HStack(spacing: 3) {
-                    StatusDot(color: hasDevice ? .dsSuccess : .dsError, size: 4)
-                    Text(hasDevice ? "已检测" : "未连接")
-                        .font(.system(size: 8))
-                        .foregroundColor(hasDevice ? .dsSuccess : .secondary)
+            if hasDetectedDevices {
+                Menu {
+                    Button(action: { onSelectDevice("") }) {
+                        HStack(spacing: 6) {
+                            Text("选择设备…")
+                            if service.selectedDeviceUdid == nil {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: TBFont.button))
+                                    .foregroundColor(.dsAccent)
+                            }
+                        }
+                    }
+                    ForEach(service.detectedDevices, id: \.udid) { dev in
+                        Button(action: { onSelectDevice(dev.udid) }) {
+                            HStack(spacing: 6) {
+                                Text("\(dev.name) (iOS \(dev.osVersion))")
+                                if dev.udid == service.selectedDeviceUdid {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: TBFont.button))
+                                        .foregroundColor(.dsAccent)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(deviceLabel)
+                            .font(.system(size: TBFont.label, weight: .medium))
+                            .foregroundColor(.primary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: TBFont.micro))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .fixedSize()
+                .disabled(isRefreshing)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(deviceName)
+                        .font(.system(size: TBFont.label, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 100, alignment: .leading)
+                    HStack(spacing: 3) {
+                        StatusDot(color: hasDevice ? .dsSuccess : .dsError, size: 4)
+                        Text(hasDevice ? "已连接" : "未连接")
+                            .font(.system(size: TBFont.subtitle))
+                            .foregroundColor(hasDevice ? .dsSuccess : .secondary)
+                    }
                 }
             }
 
             Button(action: onRefreshDevice) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: TBFont.icon, weight: .medium))
             }
             .buttonStyle(.iconButton(size: 22))
             .help("刷新设备")
-            .disabled(service.toolState == .checking)
+            .disabled(isRefreshing)
         }
     }
 
@@ -97,11 +163,11 @@ struct TopToolbarView: View {
                         Image(systemName: mode.icon)
                             .frame(width: 14)
                         Text(mode.rawValue)
-                            .font(.system(size: 12))
+                            .font(.system(size: TBFont.label))
                         if mode == service.locationMode {
                             Spacer()
                             Image(systemName: "checkmark")
-                                .font(.system(size: 10))
+                                .font(.system(size: TBFont.button))
                                 .foregroundColor(.dsAccent)
                         }
                     }
@@ -110,11 +176,11 @@ struct TopToolbarView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: service.locationMode.icon)
-                    .font(.system(size: 10))
+                    .font(.system(size: TBFont.icon))
                 Text(service.locationMode.rawValue)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: TBFont.label, weight: .medium))
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 7))
+                    .font(.system(size: TBFont.micro))
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 6)
@@ -155,20 +221,75 @@ struct TopToolbarView: View {
     private var tunnelSection: some View {
         HStack(spacing: 5) {
             Image(systemName: "cable.connector")
-                .font(.system(size: 11))
+                .font(.system(size: TBFont.icon))
                 .foregroundColor(tunnelColor)
 
             VStack(alignment: .leading, spacing: 0) {
                 Text("Tunneld")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: TBFont.label, weight: .medium))
                     .foregroundColor(.primary)
                 Text(tunnelLabel)
-                    .font(.system(size: 8))
+                    .font(.system(size: TBFont.subtitle))
                     .foregroundColor(tunnelColor)
             }
 
-            tunnelActionButton
+            if case .installing = service.tunnelInstallState {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .scaleEffect(0.4)
+                        .frame(width: 8, height: 8)
+                    Text("安装中…")
+                        .font(.system(size: TBFont.button))
+                        .foregroundColor(.dsWarning)
+                }
+            } else if case .uninstalling = service.tunnelInstallState {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .scaleEffect(0.4)
+                        .frame(width: 8, height: 8)
+                    Text("卸载中…")
+                        .font(.system(size: TBFont.button))
+                        .foregroundColor(.dsWarning)
+                }
+            } else if case .missing = service.toolState {
+                installButton
+            } else {
+                HStack(spacing: 3) {
+                    tunnelActionButton
+                    uninstallButton
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private var installButton: some View {
+        Button(action: onInstallTunnel) {
+            Text("安装")
+                .font(.system(size: TBFont.button, weight: .semibold))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.dsAccent)
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("安装 pymobiledevice3")
+    }
+
+    @ViewBuilder
+    private var uninstallButton: some View {
+        Button(action: onUninstallTunnel) {
+            Text("卸载")
+                .font(.system(size: TBFont.button, weight: .semibold))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Color.dsError.opacity(0.12))
+                .foregroundColor(.dsError)
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("卸载 pymobiledevice3")
     }
 
     @ViewBuilder
@@ -177,7 +298,7 @@ struct TopToolbarView: View {
         case .disconnected:
             Button(action: onStartTunnel) {
                 Text("启动")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(service.canStartTunnel ? Color.dsAccent : Color.secondary.opacity(0.2))
@@ -194,7 +315,7 @@ struct TopToolbarView: View {
         case .connected:
             Button(action: onStopTunnel) {
                 Text("停止")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsError.opacity(0.12))
@@ -206,7 +327,7 @@ struct TopToolbarView: View {
         case .failed:
             Button(action: onStartTunnel) {
                 Text("重试")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsWarning)

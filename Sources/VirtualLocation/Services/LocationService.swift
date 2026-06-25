@@ -7,6 +7,10 @@ final class LocationService: ObservableObject {
     @Published var tunnelState: TunnelState = .disconnected
     @Published var status = AppStatus.ready
     @Published var device: DeviceInfo?
+    @Published var detectedDevices: [DeviceManager.DetectedDevice] = []
+    @Published var selectedDeviceUdid: String?
+    @Published var tunnelInstallState: TunnelInstallState = .idle
+    @Published var isRefreshingDevices = false
     @Published var logs: [LogEntry] = []
     @Published var customPresets: [LocationPreset] = []
     @Published var locationState: LocationState = .idle
@@ -15,7 +19,12 @@ final class LocationService: ObservableObject {
     @Published var enableJittering: Bool = false
 
     @Published var locationMode: LocationMode = .simple {
-        didSet { saveLocationMode() }
+        didSet {
+            saveLocationMode()
+            if locationMode == .simple {
+                Task { await checkTool() }
+            }
+        }
     }
     @Published var proxyState: ProxyState = .stopped
     @Published var proxySettings: ProxySettings = {
@@ -47,8 +56,12 @@ final class LocationService: ObservableObject {
 
     var canStartTunnel: Bool {
         guard case .present = toolState else { return false }
-        guard device != nil else { return false }
+        guard selectedDeviceUdid != nil || device != nil else { return false }
         return true
+    }
+
+    var canInstallTunnel: Bool {
+        tunnelInstallState == .idle
     }
 
     private let deviceManager = DeviceManager()
@@ -62,6 +75,12 @@ final class LocationService: ObservableObject {
         case starting
         case connected
         case failed(String)
+    }
+
+    enum TunnelInstallState: Equatable {
+        case idle
+        case installing
+        case uninstalling
     }
 
     enum LocationState: Equatable {
@@ -283,6 +302,10 @@ final class LocationService: ObservableObject {
     // MARK: - Tool
 
     func checkTool() async {
+        guard locationMode == .simple else {
+            toolState = .present(pmd3Path)
+            return
+        }
         toolState = .checking
         addLog(.info, "检测 pymobiledevice3 …")
         if FileManager.default.isExecutableFile(atPath: pmd3Path) {
@@ -297,6 +320,7 @@ final class LocationService: ObservableObject {
     }
 
     func installDependencies() async {
+        tunnelInstallState = .installing
         toolState = .installing
         addLog(.info, "正在安装 pymobiledevice3 …")
         status = AppStatus.info("正在安装 … (约 1-2 分钟)")
@@ -304,19 +328,84 @@ final class LocationService: ObservableObject {
             args: ["-m", "venv", "\(NSHomeDirectory())/.venv_pmd3"],
             log: "venv")
         guard venvOk else {
+            tunnelInstallState = .idle
             toolState = .missing
             status = AppStatus.error("venv 创建失败")
             return
         }
         let pip = "\(NSHomeDirectory())/.venv_pmd3/bin/pip"
-        let pipOk = await launchBlocking(pip, args: ["install", "pymobiledevice3"], log: "pip")
+        let pipOk = await launchStreaming(pip, args: ["install", "pymobiledevice3"], log: "pip")
         if pipOk {
             addLog(.info, "✅ pymobiledevice3 安装完成")
             try? await Task.sleep(nanoseconds: 300_000_000)
             await checkTool()
         } else {
+            tunnelInstallState = .idle
             toolState = .missing
             status = AppStatus.error("pip install 失败")
+        }
+        tunnelInstallState = .idle
+    }
+
+    func uninstallDependencies() async {
+        tunnelInstallState = .uninstalling
+        addLog(.info, "正在卸载 pymobiledevice3 …")
+        status = AppStatus.info("正在卸载 …")
+
+        let venvPath = "\(NSHomeDirectory())/.venv_pmd3"
+        let fm = FileManager.default
+        if fm.fileExists(atPath: venvPath) {
+            do {
+                try fm.removeItem(atPath: venvPath)
+                addLog(.info, "✅ pymobiledevice3 已卸载")
+                status = AppStatus.info("已卸载")
+            } catch {
+                addLog(.err, "卸载失败: \(error.localizedDescription)")
+                status = AppStatus.error("卸载失败")
+            }
+        } else {
+            addLog(.info, "pymobiledevice3 未安装")
+            status = AppStatus.info("未安装")
+        }
+
+        toolState = .missing
+        tunnelState = .disconnected
+        tunnelInstallState = .idle
+    }
+
+    private func launchStreaming(_ path: String, args: [String], log: String) async -> Bool {
+        await withCheckedContinuation { cont in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: path)
+            task.arguments = args
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            task.standardOutput = outPipe
+            task.standardError = errPipe
+
+            outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                    Task { @MainActor [weak self] in
+                        self?.addLog(.out, "[\(log)] \(str)")
+                    }
+                }
+            }
+            errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                    Task { @MainActor [weak self] in
+                        self?.addLog(.out, "[\(log)] \(str)")
+                    }
+                }
+            }
+
+            task.terminationHandler = { proc in
+                outPipe.fileHandleForReading.readabilityHandler = nil
+                errPipe.fileHandleForReading.readabilityHandler = nil
+                cont.resume(returning: proc.terminationStatus == 0)
+            }
+            try? task.run()
         }
     }
 
@@ -349,16 +438,70 @@ final class LocationService: ObservableObject {
     // MARK: - Device
 
     func refreshDevices() async {
+        isRefreshingDevices = true
         status = AppStatus.info("正在扫描设备 …")
         let devices = await deviceManager.detectDevices()
-        if let first = devices.first {
-            device = DeviceInfo(id: first.udid, name: first.name, osVersion: first.osVersion)
-            addLog(.info, "✅ 设备: \(first.name) iOS \(first.osVersion)")
-            status = AppStatus.info("已连接: \(first.name)")
-        } else {
+        detectedDevices = devices
+        if devices.isEmpty {
             device = nil
+            selectedDeviceUdid = nil
             addLog(.err, "未检测到设备")
             status = AppStatus.error("未检测到 iOS 设备")
+        } else {
+            if let selected = selectedDeviceUdid, devices.contains(where: { $0.udid == selected }) {
+                // keep current selection
+            } else {
+                selectedDeviceUdid = nil
+                device = nil
+            }
+            addLog(.info, "检测到 \(devices.count) 个设备")
+            for d in devices {
+                addLog(.info, "  ├─ \(d.name)  iOS \(d.osVersion)  UDID: \(d.udid)")
+            }
+            if device == nil {
+                status = AppStatus.info("请选择设备并连接")
+            }
+        }
+        isRefreshingDevices = false
+    }
+
+    func selectDevice(udid: String) {
+        selectedDeviceUdid = udid
+        if let dev = detectedDevices.first(where: { $0.udid == udid }) {
+            addLog(.info, "已选择设备: \(dev.name)")
+        }
+    }
+
+    func connectToDevice() async {
+        guard let udid = selectedDeviceUdid else {
+            status = AppStatus.error("请先选择设备")
+            return
+        }
+        guard let dev = detectedDevices.first(where: { $0.udid == udid }) else {
+            status = AppStatus.error("设备未找到")
+            return
+        }
+
+        status = AppStatus.info("正在连接 \(dev.name) …")
+        addLog(.info, "⏳ 正在连接设备 \(dev.name)，请在设备上确认信任弹窗")
+
+        let (success, output) = await launchDVTWithTimeout(
+            args: ["developer", "dvt", "simulate-location", "set",
+                   "--tunnel", udid, "--", "0.0", "0.0"],
+            timeout: 30)
+
+        if success {
+            device = DeviceInfo(id: dev.udid, name: dev.name, osVersion: dev.osVersion)
+            addLog(.info, "✅ 设备连接成功: \(dev.name)")
+            status = AppStatus.info("已连接: \(dev.name)")
+        } else {
+            if output.lowercased().contains("trust") || output.lowercased().contains("untrusted") || output.lowercased().contains("unhandled") {
+                status = AppStatus.error("请在 iOS 设备上点击「信任」！")
+                addLog(.err, "⚠️ 请在 iOS 设备上点击「信任此电脑」以完成连接")
+            } else {
+                status = AppStatus.error("连接失败: \(output)")
+                addLog(.err, "连接失败: \(output)")
+            }
         }
     }
 
@@ -368,8 +511,10 @@ final class LocationService: ObservableObject {
         guard case .present = toolState else {
             status = AppStatus.error("请先安装依赖"); return
         }
-        guard device != nil else {
-            status = AppStatus.error("请先连接设备"); return
+
+        if device == nil {
+            await connectToDevice()
+            guard device != nil else { return }
         }
 
         tunnelState = .starting

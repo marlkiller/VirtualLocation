@@ -28,7 +28,10 @@ struct ContentView: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.95)) {
                         showSearchPanel.toggle()
                     }
-                }
+                },
+                onInstallTunnel: { Task { await service.installDependencies() } },
+                onUninstallTunnel: { Task { await service.uninstallDependencies() } },
+                onSelectDevice: { udid in service.selectDevice(udid: udid) }
             )
 
             HStack(spacing: 0) {

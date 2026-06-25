@@ -16,22 +16,15 @@ struct LogDrawerView: View {
                     .fill(Color.primary.opacity(0.06))
                     .frame(height: 1)
 
-                VStack(spacing: 0) {
-                    toolbar
-                        .padding(.horizontal, 12)
-                        .padding(.top, 6)
-
-                    LogTextView(logs: service.logs)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-                        )
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 12)
-                        .padding(.top, 4)
-                }
-                .frame(height: 150)
+                LogTextView(logs: service.logs)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(height: 150)
             }
         }
         .frame(maxWidth: .infinity)
