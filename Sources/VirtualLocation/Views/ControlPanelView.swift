@@ -83,32 +83,6 @@ struct ControlPanelView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
             .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
-
-            hintRow
-        }
-    }
-
-    @ViewBuilder
-    private var hintRow: some View {
-        let hint: String = {
-            if service.locationMode == .proxy {
-                return "提示：应用位置后，关闭再打开系统定位服务以清除缓存"
-            } else if !service.isSimulating {
-                return "提示：设备需开启开发者模式，信任此电脑后生效"
-            }
-            return ""
-        }()
-        if !hint.isEmpty {
-            HStack(spacing: 4) {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(.dsAccent.opacity(0.7))
-                Text(hint)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 2)
         }
     }
 

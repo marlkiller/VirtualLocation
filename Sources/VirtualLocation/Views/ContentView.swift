@@ -209,7 +209,9 @@ struct ContentView: View {
     private func initializeApp() async {
         service.addLog(.info, "Virtual Location 启动")
         await service.checkTool()
-        await service.refreshDevices()
+        if service.locationMode == .simple {
+            await service.refreshDevices()
+        }
         if service.locationMode == .proxy && service.proxySettings.autoStart {
             await service.startProxy()
         }

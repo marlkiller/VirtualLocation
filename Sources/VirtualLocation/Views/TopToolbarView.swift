@@ -51,6 +51,7 @@ struct TopToolbarView: View {
             separator
             statusSection
             Spacer()
+            hintBadge
             actionsSection
         }
         .padding(.horizontal, 10)
@@ -502,6 +503,35 @@ struct TopToolbarView: View {
             if case .failed = service.proxyState { return .dsError }
         }
         return .secondary
+    }
+
+    // MARK: - Hint
+
+    @ViewBuilder
+    private var hintBadge: some View {
+        let hint: String = {
+            if service.locationMode == .proxy {
+                return "应用位置后，关闭再打开系统定位服务以清除缓存"
+            } else if !service.isSimulating {
+                return "设备需开启开发者模式，信任此电脑后生效"
+            }
+            return ""
+        }()
+        if !hint.isEmpty {
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.dsAccent)
+                Text(hint)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.primary.opacity(0.75))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.dsAccent.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .padding(.trailing, 4)
+        }
     }
 
     // MARK: - Actions

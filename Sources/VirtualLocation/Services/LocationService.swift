@@ -177,10 +177,14 @@ final class LocationService: ObservableObject {
             proxyState = .running(port: port)
 
             let ip = getLocalIPAddress() ?? "本机IP"
-            addLog(.info, "✅ 代理服务器已启动")
-            addLog(.info, "📍 地址: \(ip):\(port)")
-            addLog(.info, "📱 代理设置: HTTP 代理 → \(ip):\(port)")
-            addLog(.info, "🔐 CA 证书: http://\(ip):\(port)/ca.pem")
+            addLog(.info, "━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            addLog(.info, "✅ 代理服务器已启动 :\(port)")
+            addLog(.info, "━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            addLog(.info, "📱 代理设置 — HTTP 代理: \(ip):\(port)")
+            addLog(.info, "")
+            addLog(.info, "🔐 证书下载 — Safari 访问:")
+            addLog(.info, "   http://\(ip):\(port)")
+            addLog(.info, "   页面内有下载按钮和安装说明")
             status = AppStatus.info("代理运行于 \(ip):\(port)")
 
         } catch {
