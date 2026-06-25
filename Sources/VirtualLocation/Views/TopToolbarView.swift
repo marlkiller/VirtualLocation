@@ -7,7 +7,6 @@ struct TopToolbarView: View {
     var onRefreshDevice: () -> Void
     var onStartTunnel: () -> Void
     var onStopTunnel: () -> Void
-    var onOpenSettings: () -> Void
     var onToggleSearchPanel: () -> Void
 
     @State private var pulseAnim = false
@@ -403,13 +402,6 @@ struct TopToolbarView: View {
             default:
                 EmptyView()
             }
-
-            Button(action: onOpenSettings) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.iconButton(size: 26))
-            .help("设置")
         }
         .animation(.easeInOut(duration: 0.2), value: service.locationState)
     }

@@ -17,12 +17,6 @@ struct VirtualLocationApp: App {
                     openWindow(id: "about")
                 }
             }
-            CommandGroup(replacing: .appSettings) {
-                Button("设置…") {
-                    NotificationCenter.default.post(name: .openSettings, object: nil)
-                }
-                .keyboardShortcut(",")
-            }
         }
 
         Window("关于 VirtualLocation", id: "about") {
@@ -31,8 +25,4 @@ struct VirtualLocationApp: App {
         .windowResizability(.contentSize)
         .defaultSize(width: 320, height: 260)
     }
-}
-
-extension Notification.Name {
-    static let openSettings = Notification.Name("openSettings")
 }

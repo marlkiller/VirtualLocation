@@ -102,27 +102,38 @@ struct SearchPanelView: View {
         }
     }
 
+    @State private var hoveredTab: SearchTab?
+
     private var tabBar: some View {
         HStack(spacing: 0) {
             ForEach(SearchTab.allCases, id: \.self) { tab in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedTab = tab
+                Image(systemName: tab.rawValue)
+                    .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .regular))
+                    .foregroundColor(selectedTab == tab ? .dsAccent : .secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 5)
+                    .background(
+                        selectedTab == tab
+                            ? Color.dsAccent.opacity(0.1)
+                            : hoveredTab == tab
+                            ? Color.primary.opacity(0.06)
+                            : Color.clear
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selectedTab = tab
+                        }
                     }
-                } label: {
-                    Image(systemName: tab.rawValue)
-                        .font(.system(size: 11, weight: selectedTab == tab ? .semibold : .regular))
-                        .foregroundColor(selectedTab == tab ? .dsAccent : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(
-                            selectedTab == tab
-                                ? Color.dsAccent.opacity(0.1)
-                                : Color.clear
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                }
-                .buttonStyle(.plain)
+                    .onHover { hovering in
+                        hoveredTab = hovering ? tab : nil
+                        if hovering {
+                            NSCursor.pointingHand.push()
+                        } else {
+                            NSCursor.pop()
+                        }
+                    }
             }
         }
         .padding(3)

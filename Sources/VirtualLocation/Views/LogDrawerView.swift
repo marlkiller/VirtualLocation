@@ -3,115 +3,99 @@ import SwiftUI
 struct LogDrawerView: View {
     @ObservedObject var service: LocationService
     @Binding var isExpanded: Bool
+    @Binding var isVisible: Bool
 
     private var logCount: Int { service.logs.count }
-    private var lastLog: String {
-        service.logs.last?.message ?? ""
-    }
 
     var body: some View {
         VStack(spacing: 0) {
-            dragHandle
+            header
 
             if isExpanded {
-                expandedContent
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+
+                VStack(spacing: 0) {
+                    toolbar
+                        .padding(.horizontal, 12)
+                        .padding(.top, 6)
+
+                    LogTextView(logs: service.logs)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                        .padding(.top, 4)
+                }
+                .frame(height: 150)
             }
         }
-        .nativeGlass(material: .popover, blendingMode: .withinWindow)
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: DS.Corner.panel,
-                style: .continuous
-            )
-        )
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: -4)
+        .frame(maxWidth: .infinity)
+        .nativeGlass(material: .sidebar, blendingMode: .behindWindow)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: DS.Corner.panel, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
         )
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.06))
-                .frame(height: 0.5)
-                .offset(y: 0)
-        }
-        .animation(DS.Animation.logDrawer, value: isExpanded)
+        .animation(.spring(response: 0.3, dampingFraction: 0.95), value: isExpanded)
     }
 
-    private var dragHandle: some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2.5)
-                .fill(Color.primary.opacity(0.25))
-                .frame(width: 36, height: 4)
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.dsAccent)
 
-            Spacer()
-
-            if !isExpanded {
-                HStack(spacing: 6) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-
-                    Text("\(logCount) 条日志")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    if logCount > 0 {
-                        Text(lastLog)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(.secondary.opacity(0.6))
-                            .lineLimit(1)
-                    }
-                }
-                .transition(.opacity)
-            }
-
-            Spacer()
-
-            Button {
-                withAnimation(DS.Animation.logDrawer) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(isExpanded ? "折叠日志" : "展开日志")
-        }
-        .padding(.horizontal, DS.Spacing.panelPadding)
-        .frame(height: DS.Panel.logBarCollapsed)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(DS.Animation.logDrawer) {
-                isExpanded.toggle()
-            }
-        }
-    }
-
-    private var expandedContent: some View {
-        VStack(spacing: 0) {
-            toolbar
-                .padding(.horizontal, DS.Spacing.panelPadding)
-                .padding(.bottom, 6)
-
-            logContent
-        }
-        .frame(height: DS.Panel.logBarExpanded)
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 8) {
-            Text("实时日志")
+            Text("日志")
                 .font(.system(size: 11, weight: .semibold))
+
+            Text("\(logCount) 条")
+                .font(.system(size: 9))
                 .foregroundColor(.secondary)
 
             Spacer()
 
             logLevelLegend
+                .padding(.trailing, 4)
 
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.95)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "折叠" : "展开")
+
+            Button {
+                isVisible = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("隐藏日志")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.95)) {
+                isExpanded.toggle()
+            }
+        }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 8) {
             Spacer()
 
             Button {
@@ -121,24 +105,22 @@ struct LogDrawerView: View {
                 service.status = AppStatus.info("日志已复制到剪贴板")
             } label: {
                 Label("复制", systemImage: "doc.on.doc")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9))
             }
             .buttonStyle(.glass(tint: .dsAccent, prominent: false))
-            .help("复制所有日志")
 
             Button {
                 service.logs.removeAll()
             } label: {
                 Label("清空", systemImage: "trash")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9))
             }
             .buttonStyle(.glass(tint: .dsError, prominent: false))
-            .help("清空日志")
         }
     }
 
     private var logLevelLegend: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             legendDot(color: .blue, label: "命令")
             legendDot(color: .primary, label: "输出")
             legendDot(color: .red, label: "错误")
@@ -150,21 +132,10 @@ struct LogDrawerView: View {
         HStack(spacing: 3) {
             Circle()
                 .fill(color)
-                .frame(width: 4, height: 4)
+                .frame(width: 3, height: 3)
             Text(label)
                 .font(.system(size: 8))
                 .foregroundColor(.secondary)
         }
-    }
-
-    private var logContent: some View {
-        LogTextView(logs: service.logs)
-            .clipShape(RoundedRectangle(cornerRadius: DS.Corner.small, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Corner.small, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-            )
-            .padding(.horizontal, DS.Spacing.panelPadding)
-            .padding(.bottom, DS.Spacing.panelPadding)
     }
 }

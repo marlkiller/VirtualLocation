@@ -6,114 +6,9 @@ struct ControlPanelView: View {
     var onApplyLocation: () -> Void
     var onSaveToFavorites: () -> Void
     var onCopyCoordinates: () -> Void
-    var onCenterMap: () -> Void
 
     private var isSimulating: Bool { service.isSimulating }
     private var hasSelection: Bool { service.mapSelection.selectedCoordinate != nil }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            panelHeader
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-            if hasSelection || isSimulating {
-                PanelDivider()
-                    .padding(.horizontal, 12)
-
-                placeInfo
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-
-                if service.locationMode == .proxy,
-                   case .running(let port) = service.proxyState,
-                   service.wlocPatchedCount > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 8))
-                            .foregroundColor(.dsSuccess)
-                        Text("代理已修补 \(service.wlocPatchedCount) 个位置")
-                            .font(.system(size: 8))
-                            .foregroundColor(.dsSuccess)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 4)
-                }
-
-                PanelDivider()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-
-                actionButtonsSection
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
-        }
-        .frame(width: 240)
-        .nativeGlass(material: .popover, blendingMode: .withinWindow)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
-    }
-
-    // MARK: - Header
-
-    private var panelHeader: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "location.circle.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.dsAccent)
-
-            Text("定位控制")
-                .font(.system(size: 12, weight: .semibold))
-
-            Spacer(minLength: 4)
-
-            if hasSelection {
-                Button(action: onCenterMap) {
-                    Image(systemName: "arrow.up.forward.and.arrow.down.backward")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("居中到选定位置")
-            }
-
-            // Show current mode badge
-            Text(service.locationMode.rawValue)
-                .font(.system(size: 8, weight: .medium))
-                .foregroundColor(service.locationMode == .proxy ? .dsWarning : .dsAccent)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background((service.locationMode == .proxy ? Color.dsWarning : Color.dsAccent).opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-        }
-    }
-
-    // MARK: - Place Info
-
-    private var placeInfo: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(isSimulating ? Color.dsSuccess : Color.dsWarning)
-                .frame(width: 6, height: 6)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(placeName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Text(isSimulating
-                     ? "\(service.activeLat.coordinateString), \(service.activeLng.coordinateString)"
-                     : coordinateString)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
     private var placeName: String {
         if isSimulating {
             return service.mapSelection.selectedPlaceName.isEmpty
@@ -124,140 +19,142 @@ struct ControlPanelView: View {
             ? "选定位置"
             : service.mapSelection.selectedPlaceName
     }
-
-    private var coordinateString: String {
-        guard let coord = service.mapSelection.selectedCoordinate else { return "--, --" }
-        return "\(coord.latitude.coordinateString), \(coord.longitude.coordinateString)"
+    private var coordinateText: String {
+        let lat = service.mapSelection.selectedCoordinate?.latitude ?? service.activeLat
+        let lng = service.mapSelection.selectedCoordinate?.longitude ?? service.activeLng
+        return "\(lat.coordinateString), \(lng.coordinateString)"
     }
 
-    // MARK: - Actions
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "location.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.dsAccent)
 
-    private var actionButtonsSection: some View {
-        VStack(spacing: 6) {
-            if service.locationMode == .proxy {
-                if case .running = service.proxyState {
-                    locationActionButton
-                } else {
-                    proxyNotReadyNotice
-                }
-            } else if case .connected = service.tunnelState {
-                locationActionButton
-            } else {
-                tunnelRequiredNotice
-            }
-
-            HStack(spacing: 6) {
-                tinyButton(icon: "bookmark", label: "收藏", action: onSaveToFavorites,
-                           disabled: !hasSelection)
-                tinyButton(icon: "doc.on.doc", label: "复制", action: onCopyCoordinates,
-                           disabled: !hasSelection && !isSimulating)
-
-                if service.locationMode == .simple {
-                    Button(action: { service.enableJittering.toggle() }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "cellularbars")
-                                .font(.system(size: 9))
-                            Text("防检测")
-                                .font(.system(size: 9, weight: .medium))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(service.enableJittering ? Color.dsSuccess.opacity(0.15) : Color.primary.opacity(0.06))
-                        .foregroundColor(service.enableJittering ? .dsSuccess : .primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("开启随机抖动以防止应用检测")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(placeName)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text(coordinateText)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
                 }
             }
-        }
-    }
 
-    private var locationActionButton: some View {
-        Group {
-            switch service.locationState {
-            case .setting:
-                loadingBadge(text: "定位中…", color: .dsAccent)
-            case .clearing:
-                loadingBadge(text: "恢复中…", color: .dsError)
-            default:
-                Button(action: onApplyLocation) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 10))
-                        Text(isSimulating ? "更新定位" : "应用定位")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(!hasSelection ? Color.secondary.opacity(0.2) : Color.dsAccent)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Spacer()
+
+            if service.locationMode == .proxy,
+               case .running = service.proxyState,
+               service.wlocPatchedCount > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.dsSuccess)
+                    Text("已修补 \(service.wlocPatchedCount) 个")
+                        .font(.system(size: 9))
+                        .foregroundColor(.dsSuccess)
                 }
-                .buttonStyle(.plain)
-                .disabled(!hasSelection)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.dsSuccess.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+
+            HStack(spacing: 4) {
+                barButton(icon: "bookmark", label: "收藏", action: onSaveToFavorites,
+                          disabled: !hasSelection)
+                barButton(icon: "doc.on.doc", label: "复制", action: onCopyCoordinates,
+                          disabled: !hasSelection && !isSimulating)
+                applyButton
             }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 2)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
     }
 
-    private var tunnelRequiredNotice: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "lightbulb")
-                .font(.system(size: 9))
-            Text("需要 Tunneld")
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(.dsWarning)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(Color.dsWarning.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private var proxyNotReadyNotice: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "network.slash")
-                .font(.system(size: 9))
-            Text("代理未就绪")
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(.secondary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func loadingBadge(text: String, color: Color) -> some View {
-        HStack(spacing: 5) {
-            ProgressView()
-                .scaleEffect(0.5)
-                .frame(width: 10, height: 10)
-            Text(text)
-                .font(.system(size: 11, weight: .semibold))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 7)
-        .background(color)
-        .foregroundColor(.white)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func tinyButton(icon: String, label: String, action: @escaping () -> Void, disabled: Bool) -> some View {
+    private func barButton(icon: String, label: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
         Button(action: action) {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                 Text(label)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(Color.primary.opacity(0.06))
+            .foregroundColor(disabled ? .secondary.opacity(0.3) : .secondary)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .opacity(disabled ? 0.35 : 1)
+    }
+
+    @ViewBuilder
+    private var applyButton: some View {
+        switch service.locationState {
+        case .setting:
+            HStack(spacing: 4) {
+                ProgressView()
+                    .scaleEffect(0.35)
+                    .frame(width: 8, height: 8)
+                Text("定位中…")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.linearGradient(colors: [.dsAccent, .dsAccent.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+            .foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        case .clearing:
+            HStack(spacing: 4) {
+                ProgressView()
+                    .scaleEffect(0.35)
+                    .frame(width: 8, height: 8)
+                Text("恢复中…")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.linearGradient(colors: [.dsError, .dsError.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+            .foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        default:
+            Button(action: onApplyLocation) {
+                HStack(spacing: 4) {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 10, weight: .bold))
+                    Text(isSimulating ? "更新" : "应用")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    Group {
+                        if !hasSelection {
+                            Color.secondary.opacity(0.15)
+                        } else {
+                            LinearGradient(colors: [.dsAccent, .dsAccent.opacity(0.85)], startPoint: .top, endPoint: .bottom)
+                        }
+                    }
+                )
+                .foregroundColor(!hasSelection ? .secondary.opacity(0.5) : .white)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasSelection)
+        }
     }
 }
