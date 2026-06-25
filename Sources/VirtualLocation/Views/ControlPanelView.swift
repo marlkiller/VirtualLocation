@@ -26,62 +26,90 @@ struct ControlPanelView: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        VStack(spacing: 6) {
             HStack(spacing: 10) {
-                Image(systemName: "location.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(.dsAccent)
+                HStack(spacing: 10) {
+                    Image(systemName: "location.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.dsAccent)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(placeName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Text(coordinateText)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(placeName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        Text(coordinateText)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
                 }
-            }
 
-            Spacer()
+                Spacer()
 
-            if service.locationMode == .proxy,
-               case .running = service.proxyState,
-               service.wlocPatchedCount > 0 {
+                if service.locationMode == .proxy,
+                   case .running = service.proxyState,
+                   service.wlocPatchedCount > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.dsSuccess)
+                        Text("已修补 \(service.wlocPatchedCount) 个")
+                            .font(.system(size: 9))
+                            .foregroundColor(.dsSuccess)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.dsSuccess.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+
                 HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(.dsSuccess)
-                    Text("已修补 \(service.wlocPatchedCount) 个")
-                        .font(.system(size: 9))
-                        .foregroundColor(.dsSuccess)
+                    barButton(icon: "bookmark", label: "收藏", action: onSaveToFavorites,
+                              disabled: !hasSelection)
+                    barButton(icon: "doc.on.doc", label: "复制", action: onCopyCoordinates,
+                              disabled: !hasSelection && !isSimulating)
+                    applyButton
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.dsSuccess.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+            )
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
 
-            HStack(spacing: 4) {
-                barButton(icon: "bookmark", label: "收藏", action: onSaveToFavorites,
-                          disabled: !hasSelection)
-                barButton(icon: "doc.on.doc", label: "复制", action: onCopyCoordinates,
-                          disabled: !hasSelection && !isSimulating)
-                applyButton
-            }
+            hintRow
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 2)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
-        )
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
+    }
+
+    @ViewBuilder
+    private var hintRow: some View {
+        let hint: String = {
+            if service.locationMode == .proxy {
+                return "提示：应用位置后，关闭再打开系统定位服务以清除缓存"
+            } else if !service.isSimulating {
+                return "提示：设备需开启开发者模式，信任此电脑后生效"
+            }
+            return ""
+        }()
+        if !hint.isEmpty {
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(.dsAccent.opacity(0.7))
+                Text(hint)
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 2)
+        }
     }
 
     private func barButton(icon: String, label: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {

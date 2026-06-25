@@ -28,13 +28,12 @@ struct LogTextView: NSViewRepresentable {
         tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         tv.textColor = .labelColor
         tv.drawsBackground = false
-        tv.minSize = .zero
-        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.isHorizontallyResizable = true
         tv.isVerticallyResizable = true
-        tv.autoresizingMask = [.width]
+        tv.autoresizingMask = [.width, .height]
         tv.textContainer?.widthTracksTextView = false
         tv.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainerInset = NSSize(width: 4, height: 4)
 
         scroll.documentView = tv
         context.coordinator.textView = tv

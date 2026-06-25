@@ -5,8 +5,28 @@ APP_NAME="VirtualLocation"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/.build"
 
-echo "🔨 Building $APP_NAME ..."
-swift build -c release --product "$APP_NAME"
+# Parse architecture argument: arm | intel | u2b
+ARCH="${1:-$(uname -m)}"
+case "$ARCH" in
+    arm|arm64|aarch64)   SWIFT_ARCH="arm64"  ;;
+    intel|x86_64|amd64)  SWIFT_ARCH="x86_64" ;;
+    u2b|universal)       SWIFT_ARCH="universal" ;;
+    *) echo "Unknown arch: $ARCH (use arm, intel, or u2b)"; exit 1 ;;
+esac
+
+echo "🔨 Building $APP_NAME (arch: $SWIFT_ARCH) ..."
+
+if [ "$SWIFT_ARCH" = "universal" ]; then
+    swift build -c release --product "$APP_NAME" --arch arm64
+    swift build -c release --product "$APP_NAME" --arch x86_64
+    mkdir -p "$BUILD_DIR/release"
+    lipo -create \
+        "$BUILD_DIR/arm64-apple-macosx/release/$APP_NAME" \
+        "$BUILD_DIR/x86_64-apple-macosx/release/$APP_NAME" \
+        -output "$BUILD_DIR/release/$APP_NAME"
+else
+    swift build -c release --product "$APP_NAME" --arch "$SWIFT_ARCH"
+fi
 
 RELEASE_BIN="$BUILD_DIR/release/$APP_NAME"
 APP_BUNDLE="$PROJECT_DIR/$APP_NAME.app"
