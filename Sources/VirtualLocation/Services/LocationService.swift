@@ -16,8 +16,6 @@ final class LocationService: ObservableObject {
     @Published var locationState: LocationState = .idle
     @Published var searchHistory: [SearchHistoryItem] = []
     @Published var mapSelection = MapSelectionState()
-    @Published var enableJittering: Bool = false
-
     @Published var locationMode: LocationMode = .simple {
         didSet {
             saveLocationMode()
@@ -65,7 +63,6 @@ final class LocationService: ObservableObject {
     private let deviceManager = DeviceManager()
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
     private var dvtTask: Process?
-    private var refreshTimer: Timer?
     private var proxyServer: ProxyServer?
 
     enum TunnelState: Equatable {
@@ -457,9 +454,11 @@ final class LocationService: ObservableObject {
                 selectedDeviceUdid = nil
                 device = nil
             }
-            addLog(.info, "检测到 \(devices.count) 个设备")
+            let online = devices.filter { !$0.isOffline }
+            addLog(.info, "检测到 \(online.count) 个在线设备, \(devices.count - online.count) 个离线设备")
             for d in devices {
-                addLog(.info, "  ├─ \(d.name)  iOS \(d.osVersion)  UDID: \(d.udid)")
+                let tag = d.isOffline ? " [离线]" : ""
+                addLog(.info, "  ├─ \(d.name)  iOS \(d.osVersion)  UDID: \(d.udid)\(tag)")
             }
             if device == nil {
                 status = AppStatus.info("请选择设备并连接")
@@ -485,26 +484,29 @@ final class LocationService: ObservableObject {
             return
         }
 
-        status = AppStatus.info("正在连接 \(dev.name) …")
-        addLog(.info, "⏳ 正在连接设备 \(dev.name)，请在设备上确认信任弹窗")
+        status = AppStatus.info("正在验证设备 \(dev.name) …")
 
-        let (success, output) = await launchDVTWithTimeout(
-            args: ["developer", "dvt", "simulate-location", "set",
-                   "--tunnel", udid, "--", "0.0", "0.0"],
-            timeout: 30)
+        // Use `lockdown get --key UniqueDeviceID` which returns just the UDID
+        // as a JSON string. Compare it against the requested UDID to confirm
+        // we reached the correct device.
+        let (ok, output) = await launchDVTWithTimeout(
+            args: ["lockdown", "get", "--key", "UniqueDeviceID", "--udid", udid],
+            timeout: 5)
 
-        if success {
+        let returnedUdid = output
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+
+        if ok && returnedUdid.caseInsensitiveCompare(udid) == .orderedSame {
             device = DeviceInfo(id: dev.udid, name: dev.name, osVersion: dev.osVersion)
-            addLog(.info, "✅ 设备连接成功: \(dev.name)")
+            addLog(.info, "✅ 设备已就绪 (USB): \(dev.name)")
             status = AppStatus.info("已连接: \(dev.name)")
+        } else if ok {
+            addLog(.err, "UDID 不匹配: 请求 \(udid), 返回 \(returnedUdid)")
+            status = AppStatus.error("设备 \(dev.name) 未连接")
         } else {
-            if output.lowercased().contains("trust") || output.lowercased().contains("untrusted") || output.lowercased().contains("unhandled") {
-                status = AppStatus.error("请在 iOS 设备上点击「信任」！")
-                addLog(.err, "⚠️ 请在 iOS 设备上点击「信任此电脑」以完成连接")
-            } else {
-                status = AppStatus.error("连接失败: \(output)")
-                addLog(.err, "连接失败: \(output)")
-            }
+            addLog(.err, "设备检测失败: \(output)")
+            status = AppStatus.error("设备 \(dev.name) 未响应")
         }
     }
 
@@ -521,10 +523,14 @@ final class LocationService: ObservableObject {
 
         if device == nil {
             await connectToDevice()
-            guard device != nil else {
-                tunnelState = .disconnected
-                return
-            }
+        }
+
+        // Need at least a selected UDID to try tunnel
+        guard let udid = selectedDeviceUdid,
+              let detectedDev = detectedDevices.first(where: { $0.udid == udid }) else {
+            tunnelState = .disconnected
+            status = AppStatus.error("请先选择设备")
+            return
         }
 
         // Show password input if not yet provided
@@ -562,6 +568,34 @@ final class LocationService: ObservableObject {
                         if proc.terminationStatus == 0 {
                             self.addLog(.info, "✅ Tunneld 已启动")
                             try? await Task.sleep(nanoseconds: 3_000_000_000)
+
+                            // Verify device tunnel is active
+                            let verifyUdid = self.device?.id ?? udid
+                            let verifyName = self.device?.name ?? detectedDev.name
+                            self.addLog(.info, "验证设备隧道: \(verifyName)...")
+                            let (verified, verifyOutput) = await self.launchDVTWithTimeout(
+                                args: ["lockdown", "info", "--tunnel", "", "--udid", verifyUdid],
+                                timeout: 10)
+                            if verified && verifyOutput.localizedCaseInsensitiveContains(verifyUdid) {
+                                if self.device == nil {
+                                    self.device = DeviceInfo(id: detectedDev.udid, name: detectedDev.name, osVersion: detectedDev.osVersion)
+                                }
+                                self.addLog(.info, "✅ 设备隧道已连接: \(verifyName)")
+                            } else if verified {
+                                // lockdown succeeded but for a different device
+                                self.tunnelState = .failed("隧道连接了其他设备，非 \(verifyName)")
+                                self.addLog(.err, "隧道验证失败: 期望 UDID \(verifyUdid), 返回: \(String(verifyOutput.prefix(300)))")
+                                self.status = AppStatus.error("设备 \(verifyName) 验证失败")
+                                cont.resume()
+                                return
+                            } else {
+                                self.tunnelState = .failed("设备 \(verifyName) 无响应")
+                                self.addLog(.err, "设备 \(verifyName) 无法连接: \(verifyOutput)")
+                                self.status = AppStatus.error("设备 \(verifyName) 无法连接")
+                                cont.resume()
+                                return
+                            }
+
                             self.tunnelState = .connected
                             self.status = AppStatus.info("✅ Tunneld 就绪")
                             cont.resume()
@@ -591,11 +625,24 @@ final class LocationService: ObservableObject {
     func stopTunneld() async {
         dvtTask?.terminate()
         dvtTask = nil
-        stopLocationRefresh()
-        let killTask = Process()
-        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killTask.arguments = ["-f", "tunneld"]
-        try? killTask.run()
+
+        if !passwordInputValue.isEmpty {
+            let escapedPassword = passwordInputValue.replacingOccurrences(of: "\"", with: "\\\"")
+            let script = """
+            do shell script "pkill -f tunneld" with administrator privileges password "\(escapedPassword)"
+            """
+            let asProc = Process()
+            asProc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            asProc.arguments = ["-e", script]
+            try? asProc.run()
+            asProc.waitUntilExit()
+        } else {
+            let killTask = Process()
+            killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            killTask.arguments = ["-f", "tunneld"]
+            try? killTask.run()
+        }
+
         tunnelState = .disconnected
         locationState = .idle
         addLog(.info, "Tunneld 已停止")
@@ -655,31 +702,55 @@ final class LocationService: ObservableObject {
         addLog(.cmd, "DVT 设置位置: \(latStr), \(lngStr) [设备: \(dev.id)]")
         status = AppStatus.info("正在设置位置 …")
 
-        let (success, output) = await launchDVTWithTimeout(
-            args: ["developer", "dvt", "simulate-location", "set",
-                   "--tunnel", dev.id, "--", latStr, lngStr],
-            timeout: 10)
-        if success {
-            if !output.isEmpty { addLog(.out, output) }
-            addLog(.info, "✅ DVT 位置已设置 (\(latStr), \(lngStr))")
-            status = AppStatus.info("✅ 位置已设为 \(latStr), \(lngStr)")
-        } else {
-            addLog(.err, "DVT 失败: \(output)")
-            if output.lowercased().contains("developer mode") || output.lowercased().contains("mount") {
-                status = AppStatus.error("请确保已开启开发者模式并挂载镜像")
-                addLog(.err, "需要在 iOS 设备设置 -> 隐私与安全性 中开启开发者模式。")
-            } else if output.lowercased().contains("trust") || output.lowercased().contains("untrusted") {
-                status = AppStatus.error("请在设备上点击信任此电脑！")
-            } else {
-                addLog(.info, "已保存坐标，定时刷新会持续重试")
-                status = AppStatus.info("位置已提交（后台重试中）")
+        // DVT simulate-location set keeps running to maintain the spoof.
+        // Launch as a background process and keep it alive.
+        dvtTask?.terminate()
+        dvtTask = nil
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: pmd3Path)
+        task.arguments = ["developer", "dvt", "simulate-location", "set",
+                          "--tunnel", dev.id, "--", latStr, lngStr]
+        let errPipe = Pipe()
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = errPipe
+        task.terminationHandler = { [weak self] proc in
+            let errData = try? errPipe.fileHandleForReading.readToEnd()
+            let errStr = errData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.dvtTask === task { self.dvtTask = nil }
+                // If we're still supposed to be active but the process died, log it
+                if case .active = self.locationState {
+                    self.addLog(.err, "DVT 进程意外退出: \(errStr)")
+                }
             }
         }
 
-        locationState = .active(lat: lat, lng: lng)
-        mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-        mapSelection.centerCoordinate = mapSelection.activeCoordinate
-        startLocationRefresh()
+        do {
+            try task.run()
+            dvtTask = task
+        } catch {
+            addLog(.err, "启动 DVT 失败: \(error.localizedDescription)")
+            locationState = .failed(error.localizedDescription)
+            status = AppStatus.error("启动失败")
+            return
+        }
+
+        // Give it a moment to connect and set the location
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+
+        if dvtTask?.isRunning == true {
+            addLog(.info, "✅ DVT 位置已设置 (\(latStr), \(lngStr))")
+            status = AppStatus.info("✅ 位置已设为 \(latStr), \(lngStr)")
+            locationState = .active(lat: lat, lng: lng)
+            mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            mapSelection.centerCoordinate = mapSelection.activeCoordinate
+        } else {
+            addLog(.err, "DVT 进程未能保持运行，请检查设备连接")
+            locationState = .failed("DVT 进程意外退出")
+            status = AppStatus.error("位置设置失败")
+        }
     }
 
     func setSelectedLocation() async {
@@ -708,8 +779,7 @@ final class LocationService: ObservableObject {
             return
         }
 
-        stopLocationRefresh()
-        dvtTask?.interrupt()
+        dvtTask?.terminate()
         dvtTask = nil
 
         guard let dev = device else {
@@ -720,66 +790,20 @@ final class LocationService: ObservableObject {
         locationState = .clearing
         status = AppStatus.info("正在恢复真实位置…")
 
-        launchDVT(args: ["developer", "dvt", "simulate-location", "clear",
-                         "--tunnel", dev.id]) { [weak self] success, output in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if success { self.addLog(.out, output) }
-                self.addLog(.info, "✅ 位置已清除")
-                self.locationState = .idle
-                self.mapSelection.activeCoordinate = nil
-                self.status = AppStatus.info("✅ 位置已恢复真实 GPS")
-            }
-        }
-    }
-
-    // MARK: - Location Refresh
-
-    private func startLocationRefresh() {
-        stopLocationRefresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            Task { [weak self] in
-                await self?.refreshLocation()
-            }
-        }
-        addLog(.info, "定时刷新已启动 (每 30s)")
-    }
-
-    private func stopLocationRefresh() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-    }
-
-    private func refreshLocation() async {
-        guard case .active(let lat, let lng) = locationState else { return }
-        guard let dev = device, case .connected = tunnelState else { return }
-
-        var targetLat = lat
-        var targetLng = lng
-        
-        if enableJittering {
-            // Add a small random offset (approx 1-3 meters)
-            // 1 degree latitude ~ 111,111 meters
-            let latOffset = (Double.random(in: -3...3)) / 111111.0
-            // 1 degree longitude ~ 111,111 * cos(lat) meters
-            let lngOffset = (Double.random(in: -3...3)) / (111111.0 * cos(lat * .pi / 180.0))
-            targetLat += latOffset
-            targetLng += lngOffset
-            addLog(.info, "✨ 应用位置抖动漂移...")
-        }
-
-        let latStr = String(format: "%.6f", targetLat)
-        let lngStr = String(format: "%.6f", targetLng)
-
         let (success, output) = await launchDVTWithTimeout(
-            args: ["developer", "dvt", "simulate-location", "set",
-                   "--tunnel", dev.id, "--", latStr, lngStr],
+            args: ["developer", "dvt", "simulate-location", "clear",
+                   "--tunnel", dev.id],
             timeout: 10)
         if success {
-            addLog(.info, "🔄 位置已刷新 (\(latStr), \(lngStr))")
+            if !output.isEmpty { addLog(.out, output) }
+            addLog(.info, "✅ 位置已清除")
+            status = AppStatus.info("✅ 位置已恢复真实 GPS")
         } else {
-            addLog(.err, "刷新失败: \(output)")
+            addLog(.err, "清除位置失败: \(output)")
+            status = AppStatus.error("清除位置失败")
         }
+        locationState = .idle
+        mapSelection.activeCoordinate = nil
     }
 
     // MARK: - DVT Launch
@@ -796,33 +820,26 @@ final class LocationService: ObservableObject {
 
         self.dvtTask = task
 
-        final class Flag: @unchecked Sendable { var value = false }
-        let timedOut = Flag()
         task.terminationHandler = { proc in
-            if timedOut.value { return }
+            DispatchQueue.main.async {
+                if self.dvtTask === task { self.dvtTask = nil }
+            }
             let o = (try? outPipe.fileHandleForReading.readToEnd()).flatMap {
                 String(data: $0, encoding: .utf8)
             } ?? ""
             let e = (try? errPipe.fileHandleForReading.readToEnd()).flatMap {
                 String(data: $0, encoding: .utf8)
             } ?? ""
-            completion(proc.terminationStatus == 0, proc.terminationStatus == 0 ? o : (e.isEmpty ? o : e))
+            let success = proc.terminationStatus == 0
+            let output = success ? o : (e.isEmpty ? o : e)
+            completion(success, output)
         }
 
         do {
             try task.run()
         } catch {
+            self.dvtTask = nil
             completion(false, error.localizedDescription)
-            return
-        }
-
-        DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
-            if task.isRunning {
-                let timedOutCopy = timedOut
-                timedOutCopy.value = true
-                task.interrupt()
-                completion(true, "已发送 SIGINT (DVT 正常退出)")
-            }
         }
     }
 
@@ -830,10 +847,20 @@ final class LocationService: ObservableObject {
         await withCheckedContinuation { cont in
             var didFinish = false
             launchDVT(args: args) { success, output in
-                if !didFinish { didFinish = true; cont.resume(returning: (success, output)) }
+                if !didFinish {
+                    didFinish = true
+                    cont.resume(returning: (success, output))
+                }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if !didFinish { didFinish = true; cont.resume(returning: (false, "超时")) }
+                if !didFinish {
+                    didFinish = true
+                    Task { @MainActor in
+                        self.dvtTask?.terminate()
+                        self.dvtTask = nil
+                    }
+                    cont.resume(returning: (false, "命令超时 (\(Int(timeout))s)"))
+                }
             }
         }
     }

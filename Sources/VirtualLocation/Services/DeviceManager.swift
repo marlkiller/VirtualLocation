@@ -8,6 +8,7 @@ final class DeviceManager {
         let udid: String
         let name: String
         let osVersion: String
+        let isOffline: Bool
     }
 
     func detectDevices() async -> [DetectedDevice] {
@@ -16,9 +17,12 @@ final class DeviceManager {
             let output = try await shell(xcrun, args: ["xctrace", "list", "devices"])
             log(.out, "输出:\n\(output)")
             let devices = parseXcrunOutput(output)
-            log(.info, "检测到 \(devices.count) 个 iOS 设备")
+            let online = devices.filter { !$0.isOffline }
+            let offline = devices.filter { $0.isOffline }
+            log(.info, "检测到 \(online.count) 个在线设备, \(offline.count) 个离线设备")
             for d in devices {
-                log(.info, "  ├─ \(d.name)  iOS \(d.osVersion)  UDID: \(d.udid)")
+                let tag = d.isOffline ? " [离线]" : ""
+                log(.info, "  ├─ \(d.name)  iOS \(d.osVersion)  UDID: \(d.udid)\(tag)")
             }
             return devices
         } catch {
@@ -30,16 +34,22 @@ final class DeviceManager {
     private func parseXcrunOutput(_ raw: String) -> [DetectedDevice] {
         let lines = raw.split(separator: "\n").map(String.init)
         var devices: [DetectedDevice] = []
-        let pattern = #/^(.+?)\s+\(([\d.]+)\)(?:.*?)\(([\w\-]+)\)$/#
+        var offline = false
+        let pattern = try! NSRegularExpression(pattern: #"(.+?)\s+\(([\d.]+)\)\s+\((00008[0-9A-Fa-f]{3}-[0-9A-Fa-f]{16})\)"#)
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("==") else { continue }
-            if let match = try? pattern.firstMatch(in: trimmed) {
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("==") else {
+                if trimmed.hasPrefix("== Devices Offline") { offline = true }
+                continue
+            }
+            let range = NSRange(trimmed.startIndex..., in: trimmed)
+            if let match = pattern.firstMatch(in: trimmed, range: range) {
                 devices.append(DetectedDevice(
-                    udid: String(match.3),
-                    name: String(match.1).trimmingCharacters(in: .whitespaces),
-                    osVersion: String(match.2)))
-            } else {
+                    udid: (trimmed as NSString).substring(with: match.range(at: 3)),
+                    name: (trimmed as NSString).substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces),
+                    osVersion: (trimmed as NSString).substring(with: match.range(at: 2)),
+                    isOffline: offline))
+            } else if !offline {
                 log(.info, "跳过: \(trimmed)")
             }
         }

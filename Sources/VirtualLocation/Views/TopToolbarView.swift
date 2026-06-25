@@ -30,7 +30,7 @@ struct TopToolbarView: View {
     private var deviceLabel: String {
         if let udid = service.selectedDeviceUdid,
            let dev = service.detectedDevices.first(where: { $0.udid == udid }) {
-            return dev.name
+            return dev.isOffline ? "\(dev.name) (离线)" : dev.name
         }
         return "选择设备…"
     }
@@ -102,7 +102,8 @@ struct TopToolbarView: View {
                     ForEach(service.detectedDevices, id: \.udid) { dev in
                         Button(action: { onSelectDevice(dev.udid) }) {
                             HStack(spacing: 6) {
-                                Text("\(dev.name) (iOS \(dev.osVersion))")
+                                Text(dev.isOffline ? "\(dev.name) (离线)" : "\(dev.name) (iOS \(dev.osVersion))")
+                                    .foregroundColor(dev.isOffline ? .secondary : .primary)
                                 if dev.udid == service.selectedDeviceUdid {
                                     Spacer()
                                     Image(systemName: "checkmark")
