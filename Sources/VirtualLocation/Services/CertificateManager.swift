@@ -4,7 +4,6 @@ import Security
 final class CertificateManager {
     static let shared = CertificateManager()
 
-    private let password = "virtual"
     private let fileManager = FileManager.default
 
     private var supportDir: URL {
@@ -18,6 +17,7 @@ final class CertificateManager {
     private var caKeyPEM: URL { supportDir.appendingPathComponent("ca-key.pem") }
     private var caP12: URL { supportDir.appendingPathComponent("ca.p12") }
 
+    private let p12Password = "vloc"
     private var certCache: [String: (identity: SecIdentity, cert: SecCertificate)] = [:]
     private let cacheQueue = DispatchQueue(label: "com.vloc.cert.cache")
 
@@ -90,7 +90,7 @@ final class CertificateManager {
             "-in", caCertPEM.path,
             "-inkey", caKeyPEM.path,
             "-out", caP12.path,
-            "-passout", "pass:\(password)"
+            "-passout", "pass:\(p12Password)"
         ])
     }
 
@@ -143,11 +143,11 @@ final class CertificateManager {
             "-in", serverCertPEM.path,
             "-inkey", serverKeyPEM.path,
             "-out", serverP12.path,
-            "-passout", "pass:\(password)"
+            "-passout", "pass:\(p12Password)"
         ])
     }
 
-    // MARK: - Loading via P12 (reliable)
+    // MARK: - Loading
 
     private func loadCAFromP12() throws -> (cert: SecCertificate, key: SecKey) {
         let identity = try loadIdentityFromP12(caP12)
@@ -170,8 +170,7 @@ final class CertificateManager {
 
         let p12Data = try Data(contentsOf: url)
         let options: [String: Any] = [
-            kSecImportExportPassphrase as String: password,
-            "noexp": true
+            kSecImportExportPassphrase as String: p12Password
         ]
 
         var items: CFArray?
@@ -183,7 +182,10 @@ final class CertificateManager {
             throw CertError.failedToImportP12(status: Int(status))
         }
 
-        return first[kSecImportItemIdentity as String] as! SecIdentity
+        guard let identity = first[kSecImportItemIdentity as String] else {
+            throw CertError.identityNotFound
+        }
+        return identity as! SecIdentity
     }
 
     // MARK: - Helpers
@@ -225,6 +227,7 @@ final class CertificateManager {
 enum CertError: Error, LocalizedError {
     case failedToExtractCertificate
     case failedToExtractKey
+    case identityNotFound
     case failedToImportP12(status: Int)
     case p12FileNotFound
     case opensslFailed(status: Int32, message: String)
@@ -233,6 +236,7 @@ enum CertError: Error, LocalizedError {
         switch self {
         case .failedToExtractCertificate:       return "Failed to extract certificate from identity"
         case .failedToExtractKey:               return "Failed to extract private key from identity"
+        case .identityNotFound:                  return "Identity not found in P12 import"
         case .failedToImportP12(let s):         return "Failed to import P12 (status: \(s))"
         case .p12FileNotFound:                  return "P12 file not found"
         case .opensslFailed(let s, let m):      return "openssl failed (status: \(s)): \(m)"

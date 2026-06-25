@@ -283,10 +283,12 @@ final class ProxyServer {
         urlRequest.httpMethod = httpMethod
         urlRequest.httpBody = reqBody
 
-        // Copy relevant headers
-        let forwardedHeaders: Set<String> = ["content-type", "content-length", "accept", "accept-language", "accept-encoding", "user-agent"]
+        // Copy all client headers except those managed by URLSession
+        let skipHeaders: Set<String> = ["host", "connection", "keep-alive", "proxy-connection",
+                                         "proxy-authorization", "proxy-authenticate", "te", "trailer",
+                                         "transfer-encoding", "upgrade"]
         for (key, value) in reqHeaders {
-            if forwardedHeaders.contains(key.lowercased()) {
+            if !skipHeaders.contains(key.lowercased()) {
                 urlRequest.setValue(value, forHTTPHeaderField: key)
             }
         }
