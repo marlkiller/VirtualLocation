@@ -1,6 +1,5 @@
 import Foundation
 import Security
-import Darwin
 
 // MARK: - Proxy Configuration
 

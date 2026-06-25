@@ -122,13 +122,6 @@ enum LocationMode: String, CaseIterable, Codable {
         case .proxy:  return "network.badge.shield.half.filled"
         }
     }
-
-    var description: String {
-        switch self {
-        case .simple: return "通过 DVT 服务模拟位置"
-        case .proxy:  return "通过代理拦截 WLOC 响应"
-        }
-    }
 }
 
 // MARK: - Proxy State
@@ -137,15 +130,6 @@ enum ProxyState: Equatable {
     case starting
     case running(port: UInt16)
     case failed(String)
-
-    var label: String {
-        switch self {
-        case .stopped:  return "未启动"
-        case .starting: return "启动中…"
-        case .running:  return "运行中"
-        case .failed:   return "失败"
-        }
-    }
 
     var isActive: Bool {
         if case .running = self { true } else { false }

@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 class LogTextViewImpl: NSTextView {
     override func resetCursorRects() {

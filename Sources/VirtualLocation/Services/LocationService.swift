@@ -62,10 +62,6 @@ final class LocationService: ObservableObject {
         return true
     }
 
-    var canInstallTunnel: Bool {
-        tunnelInstallState == .idle
-    }
-
     private let deviceManager = DeviceManager()
     let pmd3Path = "\(NSHomeDirectory())/.venv_pmd3/bin/pymobiledevice3"
     private var dvtTask: Process?
@@ -141,6 +137,23 @@ final class LocationService: ObservableObject {
         return address
     }
 
+    private func makeProxyConfig(port: UInt16, lat: Double, lng: Double) -> ProxyConfig {
+        ProxyConfig(
+            port: port,
+            targetLatitude: lat,
+            targetLongitude: lng,
+            targetAccuracy: 25,
+            onLog: { [weak self] level, msg in
+                Task { @MainActor in self?.addLog(level, msg) }
+            },
+            onWlocPatched: { [weak self] _, stats in
+                Task { @MainActor in
+                    self?.wlocPatchedCount += stats.locations
+                }
+            }
+        )
+    }
+
     func startProxy() async {
         guard locationMode == .proxy else { return }
 
@@ -156,20 +169,7 @@ final class LocationService: ObservableObject {
             try CertificateManager.shared.certificateForHost("gs-loc-cn.apple.com")
 
             let port = proxySettings.port
-            let config = ProxyConfig(
-                port: port,
-                targetLatitude: activeLat,
-                targetLongitude: activeLng,
-                targetAccuracy: 25,
-                onLog: { [weak self] level, msg in
-                    Task { @MainActor in self?.addLog(level, msg) }
-                },
-                onWlocPatched: { [weak self] _, stats in
-                    Task { @MainActor in
-                        self?.wlocPatchedCount += stats.locations
-                    }
-                }
-            )
+            let config = makeProxyConfig(port: port, lat: activeLat, lng: activeLng)
 
             let server = ProxyServer(config: config)
             try server.start()
@@ -203,20 +203,7 @@ final class LocationService: ObservableObject {
     func applyProxyLocation(lat: Double, lng: Double) async {
         // Update proxy config with new target coordinates
         if case .running(let port) = proxyState {
-            let config = ProxyConfig(
-                port: port,
-                targetLatitude: lat,
-                targetLongitude: lng,
-                targetAccuracy: 25,
-                onLog: { [weak self] level, msg in
-                    Task { @MainActor in self?.addLog(level, msg) }
-                },
-                onWlocPatched: { [weak self] _, stats in
-                    Task { @MainActor in
-                        self?.wlocPatchedCount += stats.locations
-                    }
-                }
-            )
+            let config = makeProxyConfig(port: port, lat: lat, lng: lng)
             proxyServer?.stop()
             let server = ProxyServer(config: config)
             do {
@@ -232,11 +219,6 @@ final class LocationService: ObservableObject {
                 proxyState = .failed(error.localizedDescription)
             }
         }
-    }
-
-    var proxyPort: UInt16 {
-        if case .running(let port) = proxyState { return port }
-        return proxySettings.port
     }
 
     // MARK: - Custom Presets
@@ -350,9 +332,9 @@ final class LocationService: ObservableObject {
         toolState = .installing
         addLog(.info, "正在安装 pymobiledevice3 …")
         status = AppStatus.info("正在安装 … (约 1-2 分钟)")
-        let venvOk = await launchBlocking("/usr/bin/python3",
+        let venvOk = await launchProcess("/usr/bin/python3",
             args: ["-m", "venv", "\(NSHomeDirectory())/.venv_pmd3"],
-            log: "venv")
+            log: "venv", streaming: false)
         guard venvOk else {
             tunnelInstallState = .idle
             toolState = .missing
@@ -360,7 +342,7 @@ final class LocationService: ObservableObject {
             return
         }
         let pip = "\(NSHomeDirectory())/.venv_pmd3/bin/pip"
-        let pipOk = await launchStreaming(pip, args: ["install", "pymobiledevice3"], log: "pip")
+        let pipOk = await launchProcess(pip, args: ["install", "pymobiledevice3"], log: "pip", streaming: true)
         if pipOk {
             addLog(.info, "✅ pymobiledevice3 安装完成")
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -399,7 +381,7 @@ final class LocationService: ObservableObject {
         tunnelInstallState = .idle
     }
 
-    private func launchStreaming(_ path: String, args: [String], log: String) async -> Bool {
+    private func launchProcess(_ path: String, args: [String], log: String, streaming: Bool) async -> Bool {
         await withCheckedContinuation { cont in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: path)
@@ -409,51 +391,40 @@ final class LocationService: ObservableObject {
             task.standardOutput = outPipe
             task.standardError = errPipe
 
-            outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
-                    Task { @MainActor [weak self] in
-                        self?.addLog(.out, "[\(log)] \(str)")
+            if streaming {
+                outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                    let data = handle.availableData
+                    if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                        Task { @MainActor [weak self] in
+                            self?.addLog(.out, "[\(log)] \(str)")
+                        }
                     }
                 }
-            }
-            errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-                let data = handle.availableData
-                if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
-                    Task { @MainActor [weak self] in
-                        self?.addLog(.out, "[\(log)] \(str)")
+                errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                    let data = handle.availableData
+                    if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                        Task { @MainActor [weak self] in
+                            self?.addLog(.out, "[\(log)] \(str)")
+                        }
                     }
                 }
             }
 
             task.terminationHandler = { proc in
-                outPipe.fileHandleForReading.readabilityHandler = nil
-                errPipe.fileHandleForReading.readabilityHandler = nil
-                cont.resume(returning: proc.terminationStatus == 0)
-            }
-            try? task.run()
-        }
-    }
-
-    private func launchBlocking(_ path: String, args: [String], log: String) async -> Bool {
-        await withCheckedContinuation { cont in
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: path)
-            task.arguments = args
-            let outPipe = Pipe()
-            let errPipe = Pipe()
-            task.standardOutput = outPipe
-            task.standardError = errPipe
-            task.terminationHandler = { proc in
-                let o = (try? outPipe.fileHandleForReading.readToEnd()).flatMap {
-                    String(data: $0, encoding: .utf8)
-                } ?? ""
-                let e = (try? errPipe.fileHandleForReading.readToEnd()).flatMap {
-                    String(data: $0, encoding: .utf8)
-                } ?? ""
-                Task { @MainActor in
-                    if !o.isEmpty { self.addLog(.out, "[\(log)] \(o)") }
-                    if !e.isEmpty { self.addLog(.out, "[\(log)] \(e)") }
+                if streaming {
+                    outPipe.fileHandleForReading.readabilityHandler = nil
+                    errPipe.fileHandleForReading.readabilityHandler = nil
+                } else {
+                    let o = (try? outPipe.fileHandleForReading.readToEnd()).flatMap {
+                        String(data: $0, encoding: .utf8)
+                    } ?? ""
+                    let e = (try? errPipe.fileHandleForReading.readToEnd()).flatMap {
+                        String(data: $0, encoding: .utf8)
+                    } ?? ""
+                    Task { @MainActor in
+                        if !o.isEmpty { self.addLog(.out, "[\(log)] \(o)") }
+                        if !e.isEmpty { self.addLog(.out, "[\(log)] \(e)") }
+                    }
                 }
                 cont.resume(returning: proc.terminationStatus == 0)
             }

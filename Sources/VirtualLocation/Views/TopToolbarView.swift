@@ -454,7 +454,7 @@ struct TopToolbarView: View {
                     ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
                     : .default, value: pulseAnim)
                 .onChange(of: isSimulating) { _, newValue in
-                    if newValue { pulseAnim = true }
+                    pulseAnim = newValue
                 }
 
             VStack(alignment: .leading, spacing: 0) {

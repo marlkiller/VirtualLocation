@@ -3,7 +3,6 @@ import SwiftUI
 // MARK: - Design Tokens
 enum DS {
     enum Corner {
-        static let panel: CGFloat = 18
         static let button: CGFloat = 10
         static let small: CGFloat = 8
         static let pill: CGFloat = 14
@@ -17,12 +16,6 @@ enum DS {
     enum Panel {
         static let width: CGFloat = 270
         static let mapControlSize: CGFloat = 38
-        static let logBarCollapsed: CGFloat = 32
-        static let logBarExpanded: CGFloat = 220
-    }
-
-    enum Animation {
-        static let logDrawer: SwiftUI.Animation = .spring(response: 0.35, dampingFraction: 0.95)
     }
 }
 
@@ -103,13 +96,4 @@ extension Color {
     static let dsSuccess = Color(red: 0.188, green: 0.820, blue: 0.345)
     static let dsError = Color(red: 1, green: 0.231, blue: 0.227)
     static let dsWarning = Color(red: 1, green: 0.624, blue: 0.039)
-}
-
-// MARK: - Divider
-struct PanelDivider: View {
-    var body: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.06))
-            .frame(height: 1)
-    }
 }

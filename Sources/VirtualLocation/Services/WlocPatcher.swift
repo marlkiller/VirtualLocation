@@ -1,10 +1,6 @@
 import Foundation
 import zlib
 
-private func hex<T: DataProtocol>(_ d: T) -> String {
-    d.prefix(32).map { String(format: "%02x", $0) }.joined()
-}
-
 private func debugLog(_ msg: String) {
     try? FileHandle.standardError.write(contentsOf: Data("[WLOC] \(msg)\n".utf8))
 }
@@ -55,27 +51,6 @@ private func writeVarint(_ value: UInt64) -> Data {
     }
     out.append(UInt8(v))
     return out
-}
-
-private func skipValue(_ data: Data, offset: Int, wireType: Int) throws -> Int {
-    guard offset >= 0, offset < data.count else { throw WlocError.truncatedVarint }
-    switch wireType {
-    case 0: return try readVarint(data, offset: offset).newOffset
-    case 1:
-        let (result, didOverflow) = offset.addingReportingOverflow(8)
-        guard !didOverflow, result <= data.count else { throw WlocError.truncatedVarint }
-        return result
-    case 2:
-        let (len, newOff) = try readVarint(data, offset: offset)
-        let (result, didOverflow) = newOff.addingReportingOverflow(Int(len))
-        guard !didOverflow, result <= data.count else { throw WlocError.truncatedVarint }
-        return result
-    case 5:
-        let (result, didOverflow) = offset.addingReportingOverflow(4)
-        guard !didOverflow, result <= data.count else { throw WlocError.truncatedVarint }
-        return result
-    default: throw WlocError.unsupportedWireType(wireType)
-    }
 }
 
 private struct ProtoField {

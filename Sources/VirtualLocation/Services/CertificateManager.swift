@@ -218,22 +218,6 @@ final class CertificateManager {
 
         return outputData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
-
-    func resetCertificates() throws {
-        cacheQueue.sync { certCache.removeAll() }
-        for url in [caCertPEM, caKeyPEM, caP12] {
-            if fileManager.fileExists(atPath: url.path) {
-                try fileManager.removeItem(at: url)
-            }
-        }
-        // Also remove server certs
-        let contents = try fileManager.contentsOfDirectory(at: supportDir, includingPropertiesForKeys: nil)
-        for url in contents {
-            if url.lastPathComponent.hasSuffix(".p12") || url.lastPathComponent.hasSuffix(".pem") || url.lastPathComponent.hasSuffix(".srl") {
-                try fileManager.removeItem(at: url)
-            }
-        }
-    }
 }
 
 // MARK: - Errors
