@@ -36,7 +36,7 @@ private func readVarint(_ data: Data, offset: Int) throws -> (value: UInt64, new
             if (b & 128) == 0 { return (value, off) }
             mul &*= 128
             shift += 7
-            if shift >= 63 { throw WlocError.varintTooLong }
+            if shift > 63 { throw WlocError.varintTooLong }
         }
         throw WlocError.truncatedVarint
     }

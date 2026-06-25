@@ -262,7 +262,7 @@ final class ProxyServer {
             handshakeStatus = SSLHandshake(sslCtx)
         }
         guard handshakeStatus == errSecSuccess else {
-            log(.err, "TLS handshake failed: \(handshakeStatus)")
+            log(.err, "TLS 握手失败: \(host) -> \(handshakeStatus)")
             return
         }
 
@@ -293,8 +293,6 @@ final class ProxyServer {
             }
         }
 
-        log(.info, "转发 \(httpMethod) \(path)")
-
         // Send request via URLSession
         let (responseData, urlResponse) = try awaitURLSession(request: urlRequest)
 
@@ -315,7 +313,7 @@ final class ProxyServer {
                 )
                 finalData = result.patched
                 patchedStats = result.stats
-                log(.info, "✅ WLOC 已修补: \(result.stats.locations) 个位置, WiFi:\(result.stats.wifi) Cell:\(result.stats.cell)")
+                log(.info, "✅ WLOC patched \(result.stats.locations) locs (WiFi:\(result.stats.wifi) Cell:\(result.stats.cell)) req:\(reqBody.count)B resp:\(responseData.count)B→\(finalData.count)B → \(config.targetLatitude),\(config.targetLongitude)")
                 config.onWlocPatched?(host, result.stats)
             } catch {
                 log(.err, "WLOC 修补失败: \(error.localizedDescription)")
@@ -440,8 +438,6 @@ final class ProxyServer {
     // MARK: - Transparent Tunnel
 
     private func handleTunnel(clientFd: Int32, host: String, port: UInt16) throws {
-        log(.info, "隧道: \(host):\(port)")
-
         // Connect to target
         let serverFd = socket(AF_INET, SOCK_STREAM, 0)
         guard serverFd >= 0 else { throw ProxyError.socketFailed("socket") }

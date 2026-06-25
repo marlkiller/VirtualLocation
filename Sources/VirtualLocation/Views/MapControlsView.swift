@@ -3,11 +3,9 @@ import MapKit
 
 struct MapControlsView: View {
     @Binding var mapType: MKMapType
-    var isSimulating: Bool
     var onZoomIn: () -> Void
     var onZoomOut: () -> Void
     var onCenterOnLocation: () -> Void
-    var onClearLocation: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,28 +16,11 @@ struct MapControlsView: View {
             mapControlButton(icon: "location", action: onCenterOnLocation)
             panelDividerShort
             mapControlButton(icon: mapTypeIcon, action: toggleMapType)
-
-            if isSimulating {
-                panelDividerShort
-                clearButton
-            }
         }
         .padding(.vertical, 6)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: DS.Corner.pill, style: .continuous))
         .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
-    }
-
-    private var clearButton: some View {
-        Button(action: onClearLocation) {
-            Image(systemName: "arrow.counterclockwise")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(.dsError)
-                .frame(width: DS.Panel.mapControlSize, height: DS.Panel.mapControlSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("恢复真实位置")
     }
 
     private var mapTypeIcon: String {

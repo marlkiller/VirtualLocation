@@ -118,26 +118,20 @@ struct ContentView: View {
                         }
                     }
 
-                    // Map controls — bottom-right (on top of log)
-                    VStack {
+                    // Map controls — middle-right
+                    HStack {
                         Spacer()
-                        HStack {
-                            Spacer()
-                            MapControlsView(
-                                mapType: $mapType,
-                                isSimulating: service.isSimulating,
-                                onZoomIn: { zoomInCounter += 1 },
-                                onZoomOut: { zoomOutCounter += 1 },
-                                onCenterOnLocation: {
-                                    if let coord = service.mapSelection.activeCoordinate ?? service.mapSelection.selectedCoordinate {
-                                        service.mapSelection.centerCoordinate = coord
-                                    }
-                                },
-                                onClearLocation: { Task { await service.clearLocation() } }
-                            )
-                            .padding(.trailing, DS.Spacing.panelMargin)
-                            .padding(.bottom, 12)
-                        }
+                        MapControlsView(
+                            mapType: $mapType,
+                            onZoomIn: { zoomInCounter += 1 },
+                            onZoomOut: { zoomOutCounter += 1 },
+                            onCenterOnLocation: {
+                                if let coord = service.mapSelection.activeCoordinate ?? service.mapSelection.selectedCoordinate {
+                                    service.mapSelection.centerCoordinate = coord
+                                }
+                            }
+                        )
+                        .padding(.trailing, DS.Spacing.panelMargin)
                     }
                 }
             }
