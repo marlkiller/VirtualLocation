@@ -17,6 +17,7 @@ struct TopToolbarView: View {
     var onUninstallTunnel: () -> Void
 
     @State private var pulseAnim = false
+    @State private var showSettings = false
 
     private var isSimulating: Bool { service.isSimulating }
     private var hasDevice: Bool { service.device != nil }
@@ -48,6 +49,7 @@ struct TopToolbarView: View {
             statusSection
             Spacer()
             hintBadge
+            settingsButton
             actionsSection
         }
         .padding(.horizontal, 10)
@@ -483,6 +485,21 @@ struct TopToolbarView: View {
     }
 
     // MARK: - Hint
+
+    // MARK: - Settings
+
+    private var settingsButton: some View {
+        Button(action: { showSettings = true }) {
+            Image(systemName: "gearshape")
+                .font(.system(size: TBFont.icon))
+                .foregroundColor(.secondary)
+        }
+        .buttonStyle(.iconButton(size: 26))
+        .help("设置")
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
+    }
 
     @ViewBuilder
     private var hintBadge: some View {

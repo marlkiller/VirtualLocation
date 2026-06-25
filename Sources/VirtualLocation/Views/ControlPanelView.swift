@@ -16,7 +16,7 @@ struct ControlPanelView: View {
                 : service.mapSelection.selectedPlaceName
         }
         return service.mapSelection.selectedPlaceName.isEmpty
-            ? "选定位置"
+            ? "在地图上选择位置"
             : service.mapSelection.selectedPlaceName
     }
     private var coordinateText: String {
@@ -27,63 +27,113 @@ struct ControlPanelView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 10) {
+            VStack(spacing: 10) {
+                // Header row: icon + place name + proxy badge
                 HStack(spacing: 10) {
-                    Image(systemName: "location.circle.fill")
-                        .font(.system(size: 14))
+                    Image(systemName: "mappin.circle.fill")
+                        .font(.system(size: 16))
                         .foregroundColor(.dsAccent)
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(placeName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                        Text(coordinateText)
-                            .font(.system(size: 10, design: .monospaced))
+                    Text(placeName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    if service.locationMode == .proxy,
+                       case .running = service.proxyState,
+                       service.wlocPatchedCount > 0 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.dsSuccess)
+                            Text("已修补 \(service.wlocPatchedCount) 个")
+                                .font(.system(size: 9))
+                                .foregroundColor(.dsSuccess)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.dsSuccess.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+
+                    if isSimulating {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.dsSuccess)
+                                .frame(width: 6, height: 6)
+                            Text("模拟中")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.dsSuccess)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.dsSuccess.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                }
+
+                // Coordinate block: prominent, copyable
+                HStack {
+                    Image(systemName: "scope")
+                        .font(.system(size: 11))
+                        .foregroundColor(hasSelection ? .dsAccent : .secondary)
+                    Text(coordinateText)
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundColor(hasSelection ? .primary : .secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button(action: onCopyCoordinates) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
+                    .buttonStyle(.plain)
+                    .help("复制坐标")
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(hasSelection ? Color.dsAccent.opacity(0.08) : Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(hasSelection ? Color.dsAccent.opacity(0.3) : Color.primary.opacity(0.08), lineWidth: 1)
+                )
 
-                Spacer()
-
-                if service.locationMode == .proxy,
-                   case .running = service.proxyState,
-                   service.wlocPatchedCount > 0 {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 9))
-                            .foregroundColor(.dsSuccess)
-                        Text("已修补 \(service.wlocPatchedCount) 个")
-                            .font(.system(size: 9))
-                            .foregroundColor(.dsSuccess)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.dsSuccess.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                }
-
-                HStack(spacing: 4) {
+                // Action buttons row
+                HStack(spacing: 8) {
                     barButton(icon: "bookmark", label: "收藏", action: onSaveToFavorites,
                               disabled: !hasSelection)
                     barButton(icon: "doc.on.doc", label: "复制", action: onCopyCoordinates,
                               disabled: !hasSelection && !isSimulating)
+
+                    Spacer()
+
                     applyButton
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
             .background(
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(.regularMaterial)
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
+                    if hasSelection {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.dsAccent.opacity(0.04))
+                    }
                 }
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 4)
-            .padding(.horizontal, 12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(hasSelection ? Color.dsAccent.opacity(0.5) : Color.primary.opacity(0.08), lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 4)
+            .padding(.horizontal, 10)
             .padding(.top, 8)
             .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
         }
@@ -91,17 +141,17 @@ struct ControlPanelView: View {
 
     private func barButton(icon: String, label: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
         Button(action: action) {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.vertical, 7)
             .background(Color.primary.opacity(0.06))
             .foregroundColor(disabled ? .secondary.opacity(0.3) : .secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -111,41 +161,41 @@ struct ControlPanelView: View {
     private var applyButton: some View {
         switch service.locationState {
         case .setting:
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 ProgressView()
-                    .scaleEffect(0.35)
-                    .frame(width: 8, height: 8)
+                    .scaleEffect(0.5)
+                    .frame(width: 10, height: 10)
                 Text("定位中…")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             .background(.linearGradient(colors: [.dsAccent, .dsAccent.opacity(0.8)], startPoint: .top, endPoint: .bottom))
             .foregroundColor(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         case .clearing:
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 ProgressView()
-                    .scaleEffect(0.35)
-                    .frame(width: 8, height: 8)
+                    .scaleEffect(0.5)
+                    .frame(width: 10, height: 10)
                 Text("恢复中…")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             .background(.linearGradient(colors: [.dsError, .dsError.opacity(0.8)], startPoint: .top, endPoint: .bottom))
             .foregroundColor(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         default:
             Button(action: onApplyLocation) {
-                HStack(spacing: 4) {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 10, weight: .bold))
-                    Text(isSimulating ? "更新" : "应用")
-                        .font(.system(size: 10, weight: .semibold))
+                HStack(spacing: 5) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 11))
+                    Text(isSimulating ? "更新位置" : "应用位置")
+                        .font(.system(size: 11, weight: .semibold))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 .background(
                     Group {
                         if !hasSelection {
@@ -156,7 +206,7 @@ struct ControlPanelView: View {
                     }
                 )
                 .foregroundColor(!hasSelection ? .secondary.opacity(0.5) : .white)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(!hasSelection)
