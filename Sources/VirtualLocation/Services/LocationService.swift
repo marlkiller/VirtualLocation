@@ -11,6 +11,7 @@ final class LocationService: ObservableObject {
     @Published var selectedDeviceUdid: String?
     @Published var tunnelInstallState: TunnelInstallState = .idle
     @Published var isRefreshingDevices = false
+    @Published var isConnecting = false
     @Published var logs: [LogEntry] = []
     @Published var customPresets: [LocationPreset] = []
     @Published var locationState: LocationState = .idle
@@ -37,6 +38,8 @@ final class LocationService: ObservableObject {
     @Published var wlocPatchedCount: Int = 0
     @Published var showPasswordInput: Bool = false
     @Published var passwordInputValue: String = ""
+
+    private var dvtExitError: String?
 
     var allPresets: [LocationPreset] { LocationPreset.builtin + customPresets }
 
@@ -450,12 +453,6 @@ final class LocationService: ObservableObject {
                 selectedDeviceUdid = nil
                 device = nil
             }
-            let online = devices.filter { !$0.isOffline }
-            addLog(.info, "检测到 \(online.count) 个在线设备, \(devices.count - online.count) 个离线设备")
-            for d in devices {
-                let tag = d.isOffline ? " [离线]" : ""
-                addLog(.info, "  ├─ \(d.name)  iOS \(d.osVersion)  UDID: \(d.udid)\(tag)")
-            }
             if device == nil {
                 status = AppStatus.info("请选择设备并连接")
             }
@@ -467,9 +464,26 @@ final class LocationService: ObservableObject {
         selectedDeviceUdid = udid
         if let dev = detectedDevices.first(where: { $0.udid == udid }) {
             addLog(.info, "已选择设备: \(dev.name)")
-            // Auto-connect to the selected device
-            Task { await connectToDevice() }
+            if let currentDevice = device, currentDevice.id != udid {
+                dvtTask?.terminate()
+                dvtTask = nil
+                device = nil
+                locationState = .idle
+                addLog(.info, "已断开原设备: \(currentDevice.name)")
+            }
+        } else {
+            device = nil
         }
+    }
+
+    func disconnectDevice() {
+        dvtTask?.terminate()
+        dvtTask = nil
+        device = nil
+        selectedDeviceUdid = nil
+        locationState = .idle
+        addLog(.info, "设备已断开连接")
+        status = AppStatus.info("已断开")
     }
 
     func connectToDevice() async {
@@ -481,30 +495,32 @@ final class LocationService: ObservableObject {
             status = AppStatus.error("设备未找到")
             return
         }
-
-        status = AppStatus.info("正在验证设备 \(dev.name) …")
-
-        // Use `lockdown get --key UniqueDeviceID` with --userspace environment
-        // to support both USB and WiFi-connected devices on iOS 17+
-        let (ok, output) = await launchDVTWithTimeout(
-            args: ["lockdown", "get", "--key", "UniqueDeviceID"],
-            timeout: 5)
-
-        let returnedUdid = output
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-
-        if ok && returnedUdid.caseInsensitiveCompare(udid) == .orderedSame {
-            device = DeviceInfo(id: dev.udid, name: dev.name, osVersion: dev.osVersion)
-            addLog(.info, "✅ 设备已就绪: \(dev.name)")
-            status = AppStatus.info("已连接: \(dev.name)")
-        } else if ok {
-            addLog(.err, "UDID 不匹配: 请求 \(udid), 返回 \(returnedUdid)")
-            status = AppStatus.error("设备 \(dev.name) 未连接")
-        } else {
-            addLog(.err, "设备检测失败: \(output)")
-            status = AppStatus.error("设备 \(dev.name) 未响应")
+        guard !dev.isOffline else {
+            addLog(.err, "设备 \(dev.name) 离线")
+            status = AppStatus.error("设备 \(dev.name) 离线")
+            return
         }
+
+        isConnecting = true
+        status = AppStatus.info("正在连接 \(dev.name) …")
+
+        // Check if the device is visible via USB (usbmux) — required by pymobiledevice3
+        let (ok, output) = await launchDVTWithTimeout(
+            args: ["usbmux", "list"],
+            timeout: 5)
+        let visibleViaUsb = ok && output.contains(udid)
+        if !visibleViaUsb {
+            addLog(.err, "设备 \(dev.name) 未通过 USB 连接，请用 USB 连接 iPhone")
+            status = AppStatus.error("请用 USB 连接 iPhone")
+            isConnecting = false
+            return
+        }
+
+        device = DeviceInfo(id: dev.udid, name: dev.name, osVersion: dev.osVersion)
+        addLog(.info, "✅ 设备已就绪: \(dev.name)")
+        status = AppStatus.info("已连接: \(dev.name)")
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        isConnecting = false
     }
 
     // MARK: - Connection (no longer used)
@@ -570,19 +586,19 @@ final class LocationService: ObservableObject {
         addLog(.cmd, "DVT 设置位置: \(latStr), \(lngStr) [设备: \(dev.id)]")
         status = AppStatus.info("正在设置位置 …")
 
-        // DVT simulate-location set keeps running to maintain the spoof.
-        // Launch as a background process and keep it alive.
         dvtTask?.terminate()
         dvtTask = nil
+        dvtExitError = nil
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: pmd3Path)
-        // Use userspace environment for both USB and WiFi-connected devices
-        task.environment = ["PYMOBILEDEVICE3_USERSPACE": "1"]
+        var env = ProcessInfo.processInfo.environment
+        env["PYMOBILEDEVICE3_USERSPACE"] = "1"
+        env["PYTHONWARNINGS"] = "ignore"
+        task.environment = env
         task.arguments = ["developer", "dvt", "simulate-location", "set",
                           "--udid", dev.id, "--", latStr, lngStr]
 
-        // Capture stderr for error logging
         let errPipe = Pipe()
         task.standardOutput = FileHandle.nullDevice
         task.standardError = errPipe
@@ -593,9 +609,11 @@ final class LocationService: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if self.dvtTask === task { self.dvtTask = nil }
-                // If we're still supposed to be active but the process died, log it
-                if case .active = self.locationState {
-                    self.addLog(.err, "DVT 进程意外退出: \(errStr)")
+                self.dvtExitError = errStr
+                if !errStr.isEmpty {
+                    self.addLog(.err, "DVT 进程退出: \(errStr)")
+                    let hint = Self.friendlyHint(for: errStr)
+                    if !hint.isEmpty { self.addLog(.info, "💡 \(hint)") }
                 }
             }
         }
@@ -610,7 +628,6 @@ final class LocationService: ObservableObject {
             return
         }
 
-        // Give it a moment to connect and set the location
         try? await Task.sleep(nanoseconds: 2_000_000_000)
 
         if dvtTask?.isRunning == true {
@@ -620,7 +637,10 @@ final class LocationService: ObservableObject {
             mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
             mapSelection.centerCoordinate = mapSelection.activeCoordinate
         } else {
-            addLog(.err, "DVT 进程未能保持运行，请检查设备连接")
+            let err = dvtExitError ?? ""
+            addLog(.err, "DVT 进程未能保持运行")
+            let hint = Self.friendlyHint(for: err)
+            if !hint.isEmpty { addLog(.info, "💡 \(hint)") }
             locationState = .failed("DVT 进程意外退出")
             status = AppStatus.error("位置设置失败")
         }
@@ -672,6 +692,8 @@ final class LocationService: ObservableObject {
             status = AppStatus.info("✅ 位置已恢复真实 GPS")
         } else {
             addLog(.err, "清除位置失败: \(output)")
+            let hint = Self.friendlyHint(for: output)
+            if !hint.isEmpty { addLog(.info, "💡 \(hint)") }
             status = AppStatus.error("清除位置失败")
         }
         locationState = .idle
@@ -684,9 +706,12 @@ final class LocationService: ObservableObject {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: pmd3Path)
         task.arguments = args
-        // Inherit default environment and add userspace flag
         var env = ProcessInfo.processInfo.environment
         env["PYMOBILEDEVICE3_USERSPACE"] = "1"
+        env["PYTHONWARNINGS"] = "ignore"
+        if let udid = selectedDeviceUdid {
+            env["PYMOBILEDEVICE3_UDID"] = udid
+        }
         task.environment = env
 
         let outPipe = Pipe()
@@ -764,6 +789,44 @@ final class LocationService: ObservableObject {
         } else {
             addLog(.err, "GPX 解析失败")
         }
+    }
+    static func friendlyHint(for errorOutput: String) -> String {
+        if errorOutput.contains("Device not found") || errorOutput.contains("No device found") || errorOutput.contains("Device is not connected") {
+            return "请用 USB 连接 iPhone"
+        }
+        if errorOutput.contains("ConnectionResetError") || errorOutput.contains("reset by peer") {
+            return """
+            连接被重置。请检查：
+            1️⃣ iPhone 和 Mac 是否在同一 WiFi 网络
+            2️⃣ iPhone 的「开发者模式」是否已开启
+            3️⃣ 尝试用 USB 连接一次
+            """
+        }
+        if errorOutput.contains("Connection refused") || errorOutput.contains("refused") {
+            return "连接被拒绝，请确认设备在线且可访问。"
+        }
+        if errorOutput.contains("Invalid device") || errorOutput.contains("InvalidDevice") {
+            return "无效设备标识符，请重新选择设备。"
+        }
+        if errorOutput.contains("timeout") || errorOutput.contains("timed out") {
+            return "连接超时，请检查网络或尝试 USB 连接。"
+        }
+        if errorOutput.contains("usbmux") || errorOutput.contains("USBMux") {
+            return """
+            USB 通信异常。请尝试：
+            1️⃣ 重新插拔 USB 线
+            2️⃣ 重启 usbmuxd: sudo killall usbmuxd
+            """
+        }
+        if errorOutput.isEmpty {
+            return """
+            连接失败。请尝试：
+            1️⃣ 用 USB 线连接 iPhone
+            2️⃣ 确保 iPhone 已解锁并信任此电脑
+            3️⃣ 在 iPhone 设置 → 隐私与安全性 → 开发者模式中检查
+            """
+        }
+        return ""
     }
 }
 

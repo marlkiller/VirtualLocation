@@ -140,8 +140,6 @@ enum ProxyState: Equatable {
 // MARK: - Proxy Settings
 struct ProxySettings: Codable {
     var port: UInt16 = 8888
-    var autoStart: Bool = false
-
     static let `default` = ProxySettings()
 }
 

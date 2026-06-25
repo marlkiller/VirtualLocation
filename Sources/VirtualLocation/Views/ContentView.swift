@@ -203,12 +203,8 @@ struct ContentView: View {
     }
 
     private func initializeApp() async {
-        service.addLog(.info, "Virtual Location 启动")
-        await service.checkTool()
-        // No longer need to refresh devices for simple mode
-        // since we use --userspace for direct connection
-        if service.locationMode == .proxy && service.proxySettings.autoStart {
-            await service.startProxy()
+        if service.locationMode == .simple {
+            await service.refreshDevices()
         }
     }
 

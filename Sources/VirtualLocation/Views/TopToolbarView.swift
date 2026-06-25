@@ -83,24 +83,18 @@ struct TopToolbarView: View {
                 .foregroundColor(hasDevice ? .dsSuccess : .secondary)
 
             if hasDetectedDevices {
-                Menu {
-                    Button(action: { onSelectDevice("") }) {
-                        HStack(spacing: 6) {
-                            Text("选择设备…")
-                            if service.selectedDeviceUdid == nil {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: TBFont.button))
-                                    .foregroundColor(.dsAccent)
-                            }
-                        }
-                    }
-                    ForEach(service.detectedDevices, id: \.udid) { dev in
-                        Button(action: { onSelectDevice(dev.udid) }) {
+                if hasDevice {
+                    Text(deviceLabel)
+                        .font(.system(size: TBFont.label, weight: .medium))
+                        .foregroundColor(.primary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                } else {
+                    Menu {
+                        Button(action: { onSelectDevice("") }) {
                             HStack(spacing: 6) {
-                                Text(dev.isOffline ? "\(dev.name) (离线)" : "\(dev.name) (iOS \(dev.osVersion))")
-                                    .foregroundColor(dev.isOffline ? .secondary : .primary)
-                                if dev.udid == service.selectedDeviceUdid {
+                                Text("选择设备…")
+                                if service.selectedDeviceUdid == nil {
                                     Spacer()
                                     Image(systemName: "checkmark")
                                         .font(.system(size: TBFont.button))
@@ -108,23 +102,37 @@ struct TopToolbarView: View {
                                 }
                             }
                         }
+                        ForEach(service.detectedDevices, id: \.udid) { dev in
+                            Button(action: { onSelectDevice(dev.udid) }) {
+                                HStack(spacing: 6) {
+                                    Text(dev.isOffline ? "\(dev.name) (离线)" : "\(dev.name) (iOS \(dev.osVersion))")
+                                        .foregroundColor(dev.isOffline ? .secondary : .primary)
+                                    if dev.udid == service.selectedDeviceUdid {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: TBFont.button))
+                                            .foregroundColor(.dsAccent)
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(deviceLabel)
+                                .font(.system(size: TBFont.label, weight: .medium))
+                                .foregroundColor(.primary)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: TBFont.micro))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(deviceLabel)
-                            .font(.system(size: TBFont.label, weight: .medium))
-                            .foregroundColor(.primary)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: TBFont.micro))
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .fixedSize()
+                    .disabled(isRefreshing)
                 }
-                .fixedSize()
-                .disabled(isRefreshing)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(deviceName)
@@ -138,6 +146,38 @@ struct TopToolbarView: View {
                             .font(.system(size: TBFont.subtitle))
                             .foregroundColor(hasDevice ? .dsSuccess : .secondary)
                     }
+                }
+            }
+
+            if hasDetectedDevices, service.selectedDeviceUdid != nil {
+                if hasDevice {
+                    Button(action: { service.disconnectDevice() }) {
+                        Text("断开")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.dsError.opacity(0.12))
+                            .foregroundColor(.dsError)
+                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("断开设备连接")
+                } else if service.isConnecting {
+                    ProgressView()
+                        .scaleEffect(0.45)
+                        .frame(width: 32)
+                } else {
+                    Button(action: { Task { await service.connectToDevice() } }) {
+                        Text("连接")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.dsAccent)
+                            .foregroundColor(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("连接设备")
                 }
             }
 
