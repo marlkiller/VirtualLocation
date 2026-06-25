@@ -58,6 +58,11 @@ final class ProxyServer {
 
     var port: UInt16 { config.port }
 
+    func updateTarget(lat: Double, lng: Double) {
+        config.targetLatitude = lat
+        config.targetLongitude = lng
+    }
+
     // MARK: - Start / Stop
 
     func start() throws {
@@ -124,7 +129,13 @@ final class ProxyServer {
                 }
             }
             guard clientFd >= 0 else {
-                if isRunning { config.onLog?(.err, "accept 失败: \(errno)") }
+                if isRunning {
+                    let err = errno
+                    // EINTR is normal (signal interrupted), don't log it
+                    if err != EINTR {
+                        config.onLog?(.err, "accept 失败: errno=\(err)")
+                    }
+                }
                 continue
             }
             trackConnection(clientFd)
@@ -285,8 +296,9 @@ final class ProxyServer {
         // Send request via URLSession
         let (responseData, urlResponse) = try awaitURLSession(request: urlRequest)
 
-        // Determine if this is a WLOC response
-        let isWlocPath = path.lowercased().contains("/clls/wloc")
+        // Determine if this is a WLOC response (exact path match, strip query params)
+        let pathOnly = path.split(separator: "?").first.map(String.init) ?? path
+        let isWlocPath = pathOnly == "/clls/wloc"
 
         var finalData = responseData
         var patchedStats: WlocStats?
@@ -309,7 +321,7 @@ final class ProxyServer {
         }
 
         // Construct and send HTTP response
-        try sendHTTPResponse(sslCtx: sslCtx, urlResponse: urlResponse, data: finalData, isPatched: patchedStats != nil)
+        try sendHTTPResponse(sslCtx: sslCtx, urlResponse: urlResponse, data: finalData, stats: patchedStats, originalDataLen: responseData.count)
     }
 
     // MARK: - Read HTTP Request from TLS
@@ -387,7 +399,7 @@ final class ProxyServer {
 
     // MARK: - Send HTTP Response over TLS
 
-    private func sendHTTPResponse(sslCtx: SSLContext, urlResponse: URLResponse, data: Data, isPatched: Bool) throws {
+    private func sendHTTPResponse(sslCtx: SSLContext, urlResponse: URLResponse, data: Data, stats: WlocStats? = nil, originalDataLen: Int = 0) throws {
         guard let httpResponse = urlResponse as? HTTPURLResponse else {
             let simple = "HTTP/1.1 200 OK\r\nContent-Length: \(data.count)\r\n\r\n"
             try writeAllSSL(sslCtx: sslCtx, data: Data(simple.utf8) + data)
@@ -407,8 +419,15 @@ final class ProxyServer {
             responseHeader += "\(keyStr): \(value)\r\n"
         }
 
-        if isPatched {
+        if let stats {
             responseHeader += "X-WLOC-Patched: 1\r\n"
+            responseHeader += "X-WLOC-Input-Len: \(originalDataLen)\r\n"
+            responseHeader += "X-WLOC-Patched-Locations: \(stats.locations)\r\n"
+            responseHeader += "X-WLOC-Patched-Wifi: \(stats.wifi)\r\n"
+            responseHeader += "X-WLOC-Patched-Cell: \(stats.cell)\r\n"
+            responseHeader += "X-WLOC-Skipped: \(stats.skipped)\r\n"
+            responseHeader += "X-WLOC-Gzip: \(stats.gzip ? "1" : "0")\r\n"
+            responseHeader += "X-WLOC-Target: \(config.targetLongitude),\(config.targetLatitude)\r\n"
         }
 
         responseHeader += "\r\n"

@@ -201,23 +201,13 @@ final class LocationService: ObservableObject {
     }
 
     func applyProxyLocation(lat: Double, lng: Double) async {
-        // Update proxy config with new target coordinates
-        if case .running(let port) = proxyState {
-            let config = makeProxyConfig(port: port, lat: lat, lng: lng)
-            proxyServer?.stop()
-            let server = ProxyServer(config: config)
-            do {
-                try server.start()
-                self.proxyServer = server
-                locationState = .active(lat: lat, lng: lng)
-                mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                mapSelection.centerCoordinate = mapSelection.activeCoordinate
-                addLog(.info, "✅ 代理目标已更新: \(lat.coordinateString), \(lng.coordinateString)")
-                status = AppStatus.info("代理目标已更新")
-            } catch {
-                addLog(.err, "更新代理失败: \(error.localizedDescription)")
-                proxyState = .failed(error.localizedDescription)
-            }
+        if case .running = proxyState {
+            proxyServer?.updateTarget(lat: lat, lng: lng)
+            locationState = .active(lat: lat, lng: lng)
+            mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            mapSelection.centerCoordinate = mapSelection.activeCoordinate
+            addLog(.info, "✅ 代理目标已更新: \(lat.coordinateString), \(lng.coordinateString)")
+            status = AppStatus.info("代理目标已更新")
         }
     }
 
@@ -305,6 +295,17 @@ final class LocationService: ObservableObject {
 
     func addLog(_ level: LogEntry.Level, _ msg: String) {
         logs.append(LogEntry(timestamp: Date(), level: level, message: msg))
+    }
+
+    func openCrashLog() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let crashLog = appSupport.appendingPathComponent("VirtualLocation/crash.log")
+        if FileManager.default.fileExists(atPath: crashLog.path) {
+            NSWorkspace.shared.open(crashLog)
+            addLog(.info, "已打开崩溃日志")
+        } else {
+            addLog(.info, "暂无崩溃日志")
+        }
     }
 
     // MARK: - Tool

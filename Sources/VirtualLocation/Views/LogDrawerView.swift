@@ -138,6 +138,15 @@ struct LogDrawerView: View {
 
     private var toolbar: some View {
         HStack(spacing: 8) {
+            Button {
+                service.openCrashLog()
+            } label: {
+                Label("崩溃日志", systemImage: "doc.text.magnifyingglass")
+                    .font(.system(size: 9))
+            }
+            .buttonStyle(.glass(tint: .secondary, prominent: false))
+            .help("查看崩溃日志")
+
             Spacer()
 
             Button {
