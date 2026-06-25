@@ -302,8 +302,8 @@ struct TopToolbarView: View {
                     .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(service.canStartTunnel ? Color.dsAccent : Color.secondary.opacity(0.2))
-                    .foregroundColor(.white)
+                    .background(service.canStartTunnel ? Color.dsAccent : Color.secondary.opacity(0.15))
+                    .foregroundColor(service.canStartTunnel ? .white : .secondary)
                     .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
             }
             .buttonStyle(.plain)

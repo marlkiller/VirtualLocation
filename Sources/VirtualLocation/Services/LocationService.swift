@@ -156,11 +156,12 @@ final class LocationService: ObservableObject {
 
     func startProxy() async {
         guard locationMode == .proxy else { return }
+        guard !proxyState.isActive, proxyState != .starting else { return }
+
+        proxyState = .starting
+        addLog(.info, "正在初始化 CA 证书…")
 
         do {
-            proxyState = .starting
-            addLog(.info, "正在初始化 CA 证书…")
-
             // Ensure CA exists
             _ = try CertificateManager.shared.ensureCA()
 
@@ -513,14 +514,18 @@ final class LocationService: ObservableObject {
         guard case .present = toolState else {
             status = AppStatus.error("请先安装依赖"); return
         }
-
-        if device == nil {
-            await connectToDevice()
-            guard device != nil else { return }
-        }
+        guard tunnelState != .starting, tunnelState != .connected else { return }
 
         tunnelState = .starting
         status = AppStatus.info("正在启动 Tunneld …")
+
+        if device == nil {
+            await connectToDevice()
+            guard device != nil else {
+                tunnelState = .disconnected
+                return
+            }
+        }
 
         // Show password input if not yet provided
         guard !passwordInputValue.isEmpty else {
