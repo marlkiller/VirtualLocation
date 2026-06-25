@@ -240,8 +240,8 @@ final class ProxyServer {
         let response = "HTTP/1.1 200 Connection Established\r\n\r\n"
         try writeAll(fd: clientFd, data: Data(response.utf8))
 
-        // Load server certificate for this host
-        let (identity, _) = try certManager.certificateForHost(host)
+        // Load server identity for this host
+        let identity = try certManager.identityForHost(host)
 
         // Create server-side SSL context
         guard let sslCtx = SSLCreateContext(nil, .serverSide, .streamType) else {

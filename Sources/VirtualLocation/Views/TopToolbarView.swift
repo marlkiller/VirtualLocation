@@ -230,7 +230,13 @@ struct TopToolbarView: View {
             .background(Color.primary.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
+        .disabled(modeLocked)
         .fixedSize()
+    }
+
+    private var modeLocked: Bool {
+        service.locationMode == .simple && service.device != nil
+        || service.proxyState.isActive
     }
 
     private func switchMode(to mode: LocationMode) {

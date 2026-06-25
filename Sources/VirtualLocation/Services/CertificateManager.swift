@@ -18,21 +18,32 @@ final class CertificateManager {
     private var caP12: URL { supportDir.appendingPathComponent("ca.p12") }
 
     private let p12Password = "vloc"
-    private var certCache: [String: (identity: SecIdentity, cert: SecCertificate)] = [:]
+    private var identityCache: [String: SecIdentity] = [:]
     private let cacheQueue = DispatchQueue(label: "com.vloc.cert.cache")
 
     // MARK: - Public API
 
     func ensureCA() throws -> (cert: SecCertificate, key: SecKey) {
-        if !fileManager.fileExists(atPath: caP12.path) {
+        if !fileManager.fileExists(atPath: caCertPEM.path) {
             try generateCA()
         }
-        return try loadCAFromP12()
+        let identity = try importP12(caP12)
+        var cert: SecCertificate?
+        var key: SecKey?
+        SecIdentityCopyCertificate(identity, &cert)
+        SecIdentityCopyPrivateKey(identity, &key)
+        guard let cert, let key else {
+            throw CertError.failedToExtractIdentity
+        }
+        return (cert, key)
     }
 
-    func certificateForHost(_ host: String) throws -> (identity: SecIdentity, cert: SecCertificate) {
-        var cached: (identity: SecIdentity, cert: SecCertificate)?
-        cacheQueue.sync { cached = certCache[host] }
+    /// Returns a SecIdentity for the given host (cached in memory).
+    /// Imports from the per-host P12 file into the keychain with ACL
+    /// that grants the current app access without prompting.
+    func identityForHost(_ host: String) throws -> SecIdentity {
+        var cached: SecIdentity?
+        cacheQueue.sync { cached = identityCache[host] }
         if let cached { return cached }
 
         let serverP12 = supportDir.appendingPathComponent("\(host).p12")
@@ -41,18 +52,50 @@ final class CertificateManager {
             try generateServerCert(for: host)
         }
 
-        let identity = try loadIdentityFromP12(serverP12)
-        var cert: SecCertificate?
-        SecIdentityCopyCertificate(identity, &cert)
-        guard let cert else { throw CertError.failedToExtractCertificate }
-
-        let result = (identity, cert)
-        cacheQueue.sync { certCache[host] = result }
-        return result
+        let identity = try importP12(serverP12)
+        cacheQueue.sync { identityCache[host] = identity }
+        return identity
     }
 
+    /// The raw CA certificate PEM data (for download by clients/iPhones).
     func caPEMData() throws -> Data {
         return try Data(contentsOf: caCertPEM)
+    }
+
+    // MARK: - Keychain Import
+
+    /// Import a P12 file into the keychain, returning the SecIdentity.
+    /// Sets up ACL so the current app can use the private key without prompting.
+    private func importP12(_ url: URL) throws -> SecIdentity {
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw CertError.p12NotFound
+        }
+
+        let p12Data = try Data(contentsOf: url)
+        var options: [String: Any] = [
+            kSecImportExportPassphrase as String: p12Password,
+        ]
+
+        // Set ACL: allow the current app to access the private key without prompt
+        var selfApp: SecTrustedApplication?
+        if SecTrustedApplicationCreateFromPath(nil, &selfApp) == errSecSuccess, let selfApp {
+            var access: SecAccess?
+            if SecAccessCreate("VirtualLocation" as CFString, [selfApp] as CFArray, &access) == errSecSuccess, let access {
+                options[kSecImportExportAccess as String] = access
+            }
+        }
+
+        var rawItems: CFArray?
+        let status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &rawItems)
+
+        guard status == errSecSuccess,
+              let items = rawItems as? [[String: Any]],
+              let first = items.first,
+              let identity = first[kSecImportItemIdentity as String] else {
+            throw CertError.p12ImportFailed(status: Int(status))
+        }
+
+        return identity as! SecIdentity
     }
 
     // MARK: - Certificate Generation
@@ -147,53 +190,6 @@ final class CertificateManager {
         ])
     }
 
-    // MARK: - Loading
-
-    private func loadCAFromP12() throws -> (cert: SecCertificate, key: SecKey) {
-        let identity = try loadIdentityFromP12(caP12)
-
-        var cert: SecCertificate?
-        SecIdentityCopyCertificate(identity, &cert)
-        guard let cert else { throw CertError.failedToExtractCertificate }
-
-        var key: SecKey?
-        SecIdentityCopyPrivateKey(identity, &key)
-        guard let key else { throw CertError.failedToExtractKey }
-
-        return (cert, key)
-    }
-
-    private func loadIdentityFromP12(_ url: URL) throws -> SecIdentity {
-        guard fileManager.fileExists(atPath: url.path) else {
-            throw CertError.p12FileNotFound
-        }
-
-        let p12Data = try Data(contentsOf: url)
-        var options: [String: Any] = [
-            kSecImportExportPassphrase as String: p12Password
-        ]
-
-        // Set permissive access to avoid keychain prompts during TLS handshake
-        var access: SecAccess?
-        if SecAccessCreate("VirtualLocation CA" as CFString, nil, &access) == errSecSuccess, let access {
-            options[kSecImportExportAccess as String] = access
-        }
-
-        var items: CFArray?
-        let status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
-
-        guard status == errSecSuccess,
-              let items = items as? [[String: Any]],
-              let first = items.first else {
-            throw CertError.failedToImportP12(status: Int(status))
-        }
-
-        guard let identity = first[kSecImportItemIdentity as String] else {
-            throw CertError.identityNotFound
-        }
-        return identity as! SecIdentity
-    }
-
     // MARK: - Helpers
 
     private func createTempDir() throws -> URL {
@@ -231,21 +227,17 @@ final class CertificateManager {
 // MARK: - Errors
 
 enum CertError: Error, LocalizedError {
-    case failedToExtractCertificate
-    case failedToExtractKey
-    case identityNotFound
-    case failedToImportP12(status: Int)
-    case p12FileNotFound
+    case failedToExtractIdentity
+    case p12NotFound
+    case p12ImportFailed(status: Int)
     case opensslFailed(status: Int32, message: String)
 
     var errorDescription: String? {
         switch self {
-        case .failedToExtractCertificate:       return "Failed to extract certificate from identity"
-        case .failedToExtractKey:               return "Failed to extract private key from identity"
-        case .identityNotFound:                  return "Identity not found in P12 import"
-        case .failedToImportP12(let s):         return "Failed to import P12 (status: \(s))"
-        case .p12FileNotFound:                  return "P12 file not found"
-        case .opensslFailed(let s, let m):      return "openssl failed (status: \(s)): \(m)"
+        case .failedToExtractIdentity:      return "Failed to extract certificate/key from identity"
+        case .p12NotFound:                  return "P12 file not found"
+        case .p12ImportFailed(let s):       return "P12 导入失败 (status: \(s))"
+        case .opensslFailed(let s, let m):  return "openssl failed (status: \(s)): \(m)"
         }
     }
 }

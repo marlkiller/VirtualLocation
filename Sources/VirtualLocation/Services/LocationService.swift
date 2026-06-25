@@ -165,9 +165,9 @@ final class LocationService: ObservableObject {
             // Ensure CA exists
             _ = try CertificateManager.shared.ensureCA()
 
-            // Pre-load certs for WLOC hostnames
-            try CertificateManager.shared.certificateForHost("gs-loc.apple.com")
-            try CertificateManager.shared.certificateForHost("gs-loc-cn.apple.com")
+            // Pre-load identity for WLOC hostnames
+            try CertificateManager.shared.identityForHost("gs-loc.apple.com")
+            try CertificateManager.shared.identityForHost("gs-loc-cn.apple.com")
 
             let port = proxySettings.port
             let config = makeProxyConfig(port: port, lat: activeLat, lng: activeLng)
