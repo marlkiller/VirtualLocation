@@ -38,6 +38,7 @@ struct ControlPanelView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
+                        .contentTransition(.interpolate)
 
                     Spacer()
 
@@ -60,9 +61,10 @@ struct ControlPanelView: View {
 
                     if isSimulating {
                         HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.dsSuccess)
-                                .frame(width: 6, height: 6)
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 8))
+                                .foregroundColor(.dsSuccess)
+                                .symbolEffect(.pulse, options: .repeating)
                             Text("模拟中")
                                 .font(.system(size: 9, weight: .medium))
                                 .foregroundColor(.dsSuccess)
@@ -83,6 +85,7 @@ struct ControlPanelView: View {
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundColor(hasSelection ? .primary : .secondary)
                         .lineLimit(1)
+                        .contentTransition(.interpolate)
                     Spacer()
                     Button(action: onCopyCoordinates) {
                         Image(systemName: "doc.on.doc")
@@ -132,12 +135,14 @@ struct ControlPanelView: View {
                     .stroke(hasSelection ? Color.dsAccent.opacity(0.5) : Color.primary.opacity(0.08), lineWidth: 1.5)
             )
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 4)
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
+            .panelShadow(radius: DS.Shadow.float)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
             .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
         }
     }
+
+    @State private var hoveredButton: String? = nil
 
     private func barButton(icon: String, label: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
         Button(action: action) {
@@ -149,12 +154,18 @@ struct ControlPanelView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.primary.opacity(0.06))
+            .background(hoveredButton == icon ? Color.primary.opacity(0.1) : Color.primary.opacity(0.06))
             .foregroundColor(disabled ? .secondary.opacity(0.3) : .secondary)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .scaleEffect(hoveredButton == icon && !disabled ? 1.04 : 1)
+            .animation(.easeInOut(duration: 0.15), value: hoveredButton)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
+        .onHover { hovering in
+            hoveredButton = hovering ? icon : nil
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
     }
 
     @ViewBuilder

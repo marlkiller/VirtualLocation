@@ -69,6 +69,13 @@ cat > "$CONTENTS/Info.plist" << EOF
     <false/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh</string>
+        <string>en</string>
+    </array>
 </dict>
 </plist>
 EOF

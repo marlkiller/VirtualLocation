@@ -22,13 +22,13 @@ struct LogDrawerView: View {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
                     )
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, DS.Spacing.panelPadding)
+                    .padding(.vertical, 10)
                     .frame(height: 150)
 
                 toolbar
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, DS.Spacing.panelPadding)
+                    .padding(.bottom, DS.Spacing.panelPadding)
             }
         }
         .frame(maxWidth: .infinity)
@@ -38,20 +38,21 @@ struct LogDrawerView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
         )
+        .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: -2)
         .animation(.spring(response: 0.3, dampingFraction: 0.95), value: isExpanded)
     }
 
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "doc.text")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.dsAccent)
 
             Text("日志")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
 
             Text("\(logCount) 条")
-                .font(.system(size: 9))
+                .font(.system(size: DS.FontSize.small))
                 .foregroundColor(.secondary)
 
             Spacer()
@@ -65,7 +66,7 @@ struct LogDrawerView: View {
                 }
             } label: {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: DS.FontSize.small, weight: .medium))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
@@ -75,14 +76,14 @@ struct LogDrawerView: View {
                 isVisible = false
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: DS.FontSize.small, weight: .medium))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
             .help("隐藏日志")
         }
-        .padding(.horizontal, 12)
-        .frame(height: 32)
+        .padding(.horizontal, 14)
+        .frame(height: 36)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.95)) {
@@ -97,7 +98,7 @@ struct LogDrawerView: View {
                 service.openCrashLog()
             } label: {
                 Label("崩溃日志", systemImage: "doc.text.magnifyingglass")
-                    .font(.system(size: 9))
+                    .font(.system(size: DS.FontSize.small))
             }
             .buttonStyle(.glass(tint: .secondary, prominent: false))
             .help("查看崩溃日志")
@@ -111,7 +112,7 @@ struct LogDrawerView: View {
                 service.status = AppStatus.info("日志已复制到剪贴板")
             } label: {
                 Label("复制", systemImage: "doc.on.doc")
-                    .font(.system(size: 9))
+                    .font(.system(size: DS.FontSize.small))
             }
             .buttonStyle(.glass(tint: .dsAccent, prominent: false))
 
@@ -119,7 +120,7 @@ struct LogDrawerView: View {
                 service.logs.removeAll()
             } label: {
                 Label("清空", systemImage: "trash")
-                    .font(.system(size: 9))
+                    .font(.system(size: DS.FontSize.small))
             }
             .buttonStyle(.glass(tint: .dsError, prominent: false))
         }
@@ -138,9 +139,9 @@ struct LogDrawerView: View {
         HStack(spacing: 3) {
             Circle()
                 .fill(color)
-                .frame(width: 3, height: 3)
+                .frame(width: 4, height: 4)
             Text(label)
-                .font(.system(size: 8))
+                .font(.system(size: DS.FontSize.micro))
                 .foregroundColor(.secondary)
         }
     }

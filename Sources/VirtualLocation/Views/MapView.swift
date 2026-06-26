@@ -61,6 +61,13 @@ struct MapView: NSViewRepresentable {
         )
         map.setRegion(region, animated: false)
 
+        if let layer = map.layer {
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowOpacity = 0.06
+            layer.shadowRadius = 4
+            layer.shadowOffset = .zero
+        }
+
         return map
     }
 
@@ -203,26 +210,26 @@ struct MapView: NSViewRepresentable {
                     if let viewLayer = v?.layer {
                         let pulseLayer = CALayer()
                         pulseLayer.name = "PulseLayer"
-                        pulseLayer.bounds = CGRect(x: 0, y: 0, width: 60, height: 60)
+                        pulseLayer.bounds = CGRect(x: 0, y: 0, width: 72, height: 72)
                         pulseLayer.position = CGPoint(x: viewLayer.bounds.midX, y: viewLayer.bounds.midY + 10)
-                        pulseLayer.cornerRadius = 30
-                        pulseLayer.backgroundColor = NSColor(.dsAccent).withAlphaComponent(0.4).cgColor
-                        pulseLayer.zPosition = -1 // Behind the marker
-                        
-                        let scaleAnim = CABasicAnimation(keyPath: "transform.scale")
-                        scaleAnim.fromValue = 0.5
-                        scaleAnim.toValue = 1.5
-                        
-                        let fadeAnim = CABasicAnimation(keyPath: "opacity")
-                        fadeAnim.fromValue = 1.0
-                        fadeAnim.toValue = 0.0
-                        
+                        pulseLayer.cornerRadius = 36
+                        pulseLayer.backgroundColor = NSColor(.dsAccent).withAlphaComponent(0.3).cgColor
+                        pulseLayer.zPosition = -1
+
+                        let grow = CABasicAnimation(keyPath: "transform.scale")
+                        grow.fromValue = 0.4
+                        grow.toValue = 1.6
+
+                        let fade = CABasicAnimation(keyPath: "opacity")
+                        fade.fromValue = 0.8
+                        fade.toValue = 0.0
+
                         let group = CAAnimationGroup()
-                        group.animations = [scaleAnim, fadeAnim]
-                        group.duration = 2.0
+                        group.animations = [grow, fade]
+                        group.duration = 2.4
                         group.repeatCount = .infinity
                         group.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                        
+
                         pulseLayer.add(group, forKey: "pulse")
                         viewLayer.addSublayer(pulseLayer)
                     }

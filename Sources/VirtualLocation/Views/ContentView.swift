@@ -259,6 +259,7 @@ struct ContentView: View {
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
                 .frame(width: 1)
+                .shadow(color: .black.opacity(0.06), radius: 2, x: 1)
         }
     }
 

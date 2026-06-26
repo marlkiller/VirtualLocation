@@ -6,16 +6,34 @@ enum DS {
         static let button: CGFloat = 10
         static let small: CGFloat = 8
         static let pill: CGFloat = 14
+        static let panel: CGFloat = 14
     }
 
     enum Spacing {
         static let panelPadding: CGFloat = 16
         static let panelMargin: CGFloat = 12
+        static let toolbar: CGFloat = 14
+        static let sectionGap: CGFloat = 8
     }
 
     enum Panel {
         static let width: CGFloat = 270
         static let mapControlSize: CGFloat = 38
+    }
+
+    enum FontSize {
+        static let micro: CGFloat = 10
+        static let small: CGFloat = 11
+        static let body: CGFloat = 12
+        static let bodyMedium: CGFloat = 13
+        static let heading: CGFloat = 16
+        static let title: CGFloat = 18
+    }
+
+    enum Shadow {
+        static let panel: CGFloat = 10
+        static let float: CGFloat = 14
+        static let prominent: CGFloat = 20
     }
 }
 
@@ -87,6 +105,22 @@ struct StatusDot: View {
             .fill(color)
             .frame(width: size, height: size)
             .shadow(color: color.opacity(0.5), radius: 3)
+    }
+}
+
+// MARK: - Shadow Modifier
+struct PanelShadow: ViewModifier {
+    var radius: CGFloat = DS.Shadow.panel
+    var opacity: Double = 0.15
+
+    func body(content: Content) -> some View {
+        content.shadow(color: .black.opacity(opacity), radius: radius, x: 0, y: radius * 0.4)
+    }
+}
+
+extension View {
+    func panelShadow(radius: CGFloat = DS.Shadow.panel, opacity: Double = 0.15) -> some View {
+        modifier(PanelShadow(radius: radius, opacity: opacity))
     }
 }
 

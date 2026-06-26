@@ -638,9 +638,10 @@ final class LocationService: ObservableObject {
 
     func clearLocation() async {
         if locationMode == .proxy {
-            stopProxy()
+            locationState = .idle
             mapSelection.activeCoordinate = nil
-            status = AppStatus.info("位置已清除")
+            status = AppStatus.info("位置已恢复，代理运行中")
+            addLog(.info, "位置已恢复（代理保持运行）")
             return
         }
 

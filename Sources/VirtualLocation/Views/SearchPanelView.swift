@@ -32,8 +32,9 @@ struct SearchPanelView: View {
 
             contentArea
         }
-        .frame(width: DS.Panel.width)
+            .frame(width: DS.Panel.width)
         .nativeGlass(material: .sidebar, blendingMode: .behindWindow)
+        .shadow(color: .black.opacity(0.08), radius: 8, x: 2, y: 0)
         .background(
             Button("") { isSearchFocused = true }
                 .keyboardShortcut("f", modifiers: .command)

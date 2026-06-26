@@ -20,7 +20,7 @@ struct MapControlsView: View {
         .padding(.vertical, 6)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: DS.Corner.pill, style: .continuous))
-        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
     }
 
     private var mapTypeIcon: String {
@@ -35,7 +35,7 @@ struct MapControlsView: View {
         Rectangle()
             .fill(Color.primary.opacity(0.08))
             .frame(width: 20, height: 0.5)
-            .padding(.vertical, 2)
+            .padding(.vertical, 3)
     }
 
     private func mapControlButton(icon: String, action: @escaping () -> Void) -> some View {

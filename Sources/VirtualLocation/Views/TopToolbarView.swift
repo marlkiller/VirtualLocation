@@ -1,11 +1,11 @@
 import SwiftUI
 
 private enum TBFont {
-    static let icon: CGFloat = 11
-    static let label: CGFloat = 11
-    static let subtitle: CGFloat = 9
-    static let button: CGFloat = 10
-    static let micro: CGFloat = 8
+    static let icon: CGFloat = 12
+    static let label: CGFloat = 12
+    static let subtitle: CGFloat = 10
+    static let button: CGFloat = 11
+    static let micro: CGFloat = 9
 }
 
 struct TopToolbarView: View {
@@ -18,6 +18,8 @@ struct TopToolbarView: View {
 
     @State private var pulseAnim = false
     @State private var showSettings = false
+    @State private var showModeTip = false
+    @State private var showDevicePicker = false
 
     private var isSimulating: Bool { service.isSimulating }
     private var hasDevice: Bool { service.device != nil }
@@ -39,6 +41,7 @@ struct TopToolbarView: View {
             toggleSearchButton
             separator
             modePicker
+            modeTipButton
             separator
             if service.locationMode == .simple {
                 deviceSection
@@ -46,14 +49,15 @@ struct TopToolbarView: View {
             }
             connectionSection
             separator
-            statusSection
+            if service.locationMode == .simple {
+                statusSection
+            }
             Spacer()
-            hintBadge
             settingsButton
             actionsSection
         }
-        .padding(.horizontal, 10)
-        .frame(height: 38)
+        .padding(.horizontal, DS.Spacing.toolbar)
+        .frame(height: 48)
         .nativeGlass(material: .headerView, blendingMode: .withinWindow)
     }
 
@@ -61,7 +65,7 @@ struct TopToolbarView: View {
         Rectangle()
             .fill(Color.primary.opacity(0.08))
             .frame(width: 1, height: 18)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, DS.Spacing.sectionGap)
     }
 
     // MARK: - Toggle Search
@@ -72,7 +76,7 @@ struct TopToolbarView: View {
                 .font(.system(size: TBFont.icon, weight: .medium))
                 .foregroundColor(.secondary)
         }
-        .buttonStyle(.iconButton(size: 26))
+        .buttonStyle(.iconButton(size: 28))
         .help("显示/隐藏搜索面板")
     }
 
@@ -88,41 +92,21 @@ struct TopToolbarView: View {
                 if hasDevice {
                     Text(deviceLabel)
                         .font(.system(size: TBFont.label, weight: .medium))
+                        .lineLimit(1)
+                        .frame(maxWidth: 200, alignment: .leading)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.primary.opacity(0.06))
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                 } else {
-                    Menu {
-                        Button(action: { onSelectDevice("") }) {
-                            HStack(spacing: 6) {
-                                Text("选择设备…")
-                                if service.selectedDeviceUdid == nil {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: TBFont.button))
-                                        .foregroundColor(.dsAccent)
-                                }
-                            }
-                        }
-                        ForEach(service.detectedDevices, id: \.udid) { dev in
-                            Button(action: { onSelectDevice(dev.udid) }) {
-                                HStack(spacing: 6) {
-                                    Text(dev.isOffline ? "\(dev.name) (离线)" : "\(dev.name) (iOS \(dev.osVersion))")
-                                        .foregroundColor(dev.isOffline ? .secondary : nil)
-                                    if dev.udid == service.selectedDeviceUdid {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                            .font(.system(size: TBFont.button))
-                                            .foregroundColor(.dsAccent)
-                                    }
-                                }
-                            }
-                        }
+                    Button {
+                        showDevicePicker = true
                     } label: {
                         HStack(spacing: 4) {
                             Text(deviceLabel)
                                 .font(.system(size: TBFont.label, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                             Image(systemName: "chevron.down")
                                 .font(.system(size: TBFont.micro))
                                 .foregroundColor(.secondary)
@@ -132,21 +116,65 @@ struct TopToolbarView: View {
                         .background(Color.primary.opacity(0.06))
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
-                    .fixedSize()
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showDevicePicker, arrowEdge: .bottom) {
+                        VStack(spacing: 0) {
+                            Button(action: {
+                                onSelectDevice("")
+                                showDevicePicker = false
+                            }) {
+                                HStack(spacing: 6) {
+                                    Text("选择设备…")
+                                        .lineLimit(1)
+                                    Spacer()
+                                    if service.selectedDeviceUdid == nil {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: TBFont.button))
+                                            .foregroundColor(.dsAccent)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                            Divider()
+                            ScrollView {
+                                VStack(spacing: 0) {
+                                    ForEach(service.detectedDevices, id: \.udid) { dev in
+                                        Button(action: {
+                                            onSelectDevice(dev.udid)
+                                            showDevicePicker = false
+                                        }) {
+                                            HStack(spacing: 6) {
+                                                Text(dev.isOffline ? "\(dev.name) (离线)" : "\(dev.name) (iOS \(dev.osVersion))")
+                                                    .foregroundColor(dev.isOffline ? .secondary : nil)
+                                                    .lineLimit(1)
+                                                Spacer()
+                                                if dev.udid == service.selectedDeviceUdid {
+                                                    Image(systemName: "checkmark")
+                                                        .font(.system(size: TBFont.button))
+                                                        .foregroundColor(.dsAccent)
+                                                }
+                                            }
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(width: 200)
+                    }
                 }
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 5) {
+                    StatusDot(color: hasDevice ? .dsSuccess : .dsError, size: 5)
                     Text(deviceName)
                         .font(.system(size: TBFont.label, weight: .medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                         .frame(maxWidth: 100, alignment: .leading)
-                    HStack(spacing: 3) {
-                        StatusDot(color: hasDevice ? .dsSuccess : .dsError, size: 4)
-                        Text(hasDevice ? "已连接" : "未连接")
-                            .font(.system(size: TBFont.subtitle))
-                            .foregroundColor(hasDevice ? .dsSuccess : .secondary)
-                    }
                 }
             }
 
@@ -154,13 +182,14 @@ struct TopToolbarView: View {
                 if hasDevice {
                     Button(action: { service.disconnectDevice() }) {
                         Text("断开")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: TBFont.button, weight: .semibold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(Color.dsError.opacity(0.12))
                             .foregroundColor(.dsError)
                             .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                     }
+                    .fixedSize()
                     .buttonStyle(.plain)
                     .help("断开设备连接")
                 } else if service.isConnecting {
@@ -170,13 +199,14 @@ struct TopToolbarView: View {
                 } else {
                     Button(action: { Task { await service.connectToDevice() } }) {
                         Text("连接")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: TBFont.button, weight: .semibold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
                             .background(Color.dsAccent)
                             .foregroundColor(.white)
                             .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                     }
+                    .fixedSize()
                     .buttonStyle(.plain)
                     .help("连接设备")
                 }
@@ -191,7 +221,7 @@ struct TopToolbarView: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: TBFont.icon, weight: .medium))
                 }
-                .buttonStyle(.iconButton(size: 22))
+                .buttonStyle(.iconButton(size: 26))
                 .help("刷新设备")
             }
         }
@@ -236,8 +266,101 @@ struct TopToolbarView: View {
         .fixedSize()
     }
 
+    // MARK: - Mode Tip
+
+    private var modeTipButton: some View {
+        Button {
+            showModeTip = true
+        } label: {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: TBFont.micro))
+                .foregroundColor(.secondary.opacity(0.6))
+        }
+        .buttonStyle(.plain)
+        .help("当前模式使用说明")
+        .popover(isPresented: $showModeTip, arrowEdge: .bottom) {
+            modeTipContent
+        }
+    }
+
+    @ViewBuilder
+    private var modeTipContent: some View {
+        if service.locationMode == .simple {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 22))
+                        .foregroundColor(.dsAccent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("普通模式 (DVT)")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("通过 USB 利用 DVT 协议直接注入定位")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    stepRow(index: 1, text: "数据线连接 iPhone，确保已开启开发者模式")
+                    stepRow(index: 2, text: "点击工具栏安装 pymobiledevice3（自动创建虚拟环境）")
+                    stepRow(index: 3, text: "选择设备，地图选点后按 ⌘↵ 应用")
+                }
+            }
+            .padding(16)
+            .frame(width: 300)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "network.badge.shield.half.filled")
+                        .font(.system(size: 22))
+                        .foregroundColor(.dsAccent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("代理模式 (MITM)")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("通过 WiFi 代理劫持定位请求，无线操作")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    stepRow(index: 1, text: "iPhone 连接同个 WiFi，关闭 VPN，设置 WiFi 代理为 Mac IP + 端口")
+                    stepRow(index: 2, text: "Safari 访问 http://Mac IP:端口 → 下载安装 CA 证书")
+                    stepRow(index: 3, text: "iOS 设置 > 通用 > 关于 > 证书信任设置 → 启用证书")
+                    stepRow(index: 4, text: "点启动代理，地图选点后按 ⌘↵ 应用")
+                }
+            }
+            .padding(16)
+            .frame(width: 320)
+        }
+    }
+
+    private func stepRow(index: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(index)")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 16, height: 16)
+                .background(Color.dsAccent)
+                .clipShape(Circle())
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var modeLocked: Bool {
-        service.locationMode == .simple && service.device != nil
+        service.toolState == .installing || service.toolState == .uninstalling
+        || service.locationMode == .simple && service.device != nil
         || service.proxyState.isActive
     }
 
@@ -270,18 +393,11 @@ struct TopToolbarView: View {
 
     private var simpleModeSection: some View {
         HStack(spacing: 5) {
-            Image(systemName: "cable.connector")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+            StatusDot(color: pmd3StatusColor, size: 5)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text("pymobiledevice3")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                Text(pmd3Status)
-                    .font(.system(size: 8))
-                    .foregroundColor(pmd3StatusColor)
-            }
+            Text("pymobiledevice3")
+                .font(.system(size: TBFont.label, weight: .medium))
+                .foregroundColor(.primary)
 
             pmd3ActionButton
         }
@@ -313,7 +429,7 @@ struct TopToolbarView: View {
         case .missing:
             Button(action: onInstallTunnel) {
                 Text("安装")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsAccent)
@@ -322,10 +438,14 @@ struct TopToolbarView: View {
             }
             .buttonStyle(.plain)
             .help("安装 pymobiledevice3")
-        default:
+        case .installing, .uninstalling:
+            ProgressView()
+                .scaleEffect(0.4)
+                .frame(width: 32)
+        case .present:
             Button(action: onUninstallTunnel) {
                 Text("卸载")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsError.opacity(0.12))
@@ -334,6 +454,8 @@ struct TopToolbarView: View {
             }
             .buttonStyle(.plain)
             .help("卸载 pymobiledevice3")
+        default:
+            EmptyView()
         }
     }
 
@@ -341,18 +463,11 @@ struct TopToolbarView: View {
 
     private var proxySection: some View {
         HStack(spacing: 5) {
-            Image(systemName: "network.badge.shield.half.filled")
-                .font(.system(size: 11))
-                .foregroundColor(proxyColor)
+            StatusDot(color: proxyColor, size: 5)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text("代理")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                Text(proxyLabel)
-                    .font(.system(size: 8))
-                    .foregroundColor(proxyColor)
-            }
+            Text("代理")
+                .font(.system(size: TBFont.label, weight: .medium))
+                .foregroundColor(.primary)
 
             proxyActionButton
         }
@@ -364,7 +479,7 @@ struct TopToolbarView: View {
         case .stopped:
             Button(action: { Task { await service.startProxy() } }) {
                 Text("启动")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsAccent)
@@ -380,7 +495,7 @@ struct TopToolbarView: View {
         case .running:
             Button(action: { service.stopProxy() }) {
                 Text("停止")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsError.opacity(0.12))
@@ -392,7 +507,7 @@ struct TopToolbarView: View {
         case .failed:
             Button(action: { Task { await service.startProxy() } }) {
                 Text("重试")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: TBFont.button, weight: .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.dsWarning)
@@ -425,27 +540,14 @@ struct TopToolbarView: View {
     // MARK: - Status
 
     private var statusSection: some View {
-        HStack(spacing: 6) {
-            Image(systemName: service.locationMode == .proxy ? "network.badge.shield.half.filled" : "location.circle.fill")
-                .font(.system(size: 11))
-                .foregroundColor(statusIconColor)
-                .scaleEffect(isSimulating && pulseAnim ? 1.15 : 1)
-                .animation(isSimulating
-                    ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
-                    : .default, value: pulseAnim)
-                .onChange(of: isSimulating) { _, newValue in
-                    pulseAnim = newValue
-                }
+        HStack(spacing: 5) {
+            StatusDot(color: statusDotColor, size: 6)
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(statusTitle)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                Text(statusSubtitle)
-                    .font(.system(size: 8))
-                    .foregroundColor(statusSubtitleColor)
-            }
+            Text(statusTitle)
+                .font(.system(size: TBFont.label, weight: .medium))
+                .foregroundColor(.primary)
         }
+        .symbolEffect(.pulse, options: .repeating, isActive: isSimulating)
     }
 
     private var statusTitle: String {
@@ -466,7 +568,7 @@ struct TopToolbarView: View {
         return "待命"
     }
 
-    private var statusIconColor: Color {
+    private var statusSubtitleColor: Color {
         if isSimulating { return .dsSuccess }
         if service.locationMode == .proxy {
             if case .running = service.proxyState { return .dsWarning }
@@ -475,11 +577,12 @@ struct TopToolbarView: View {
         return .secondary
     }
 
-    private var statusSubtitleColor: Color {
+    private var statusDotColor: Color {
         if isSimulating { return .dsSuccess }
         if service.locationMode == .proxy {
-            if case .running = service.proxyState { return .dsWarning }
+            if case .running = service.proxyState { return .dsSuccess }
             if case .failed = service.proxyState { return .dsError }
+            if case .starting = service.proxyState { return .dsWarning }
         }
         return .secondary
     }
@@ -492,37 +595,10 @@ struct TopToolbarView: View {
                 .font(.system(size: TBFont.icon))
                 .foregroundColor(.secondary)
         }
-        .buttonStyle(.iconButton(size: 26))
+        .buttonStyle(.iconButton(size: 28))
         .help("设置")
         .sheet(isPresented: $showSettings) {
             SettingsView()
-        }
-    }
-
-    @ViewBuilder
-    private var hintBadge: some View {
-        let hint: String = {
-            if service.locationMode == .proxy {
-                return "应用位置后，关闭再打开系统定位服务以清除缓存"
-            } else if !service.isSimulating {
-                return "设备需开启开发者模式，信任此电脑后生效"
-            }
-            return ""
-        }()
-        if !hint.isEmpty {
-            HStack(spacing: 4) {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(.dsWarning)
-                Text(hint)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.dsWarning)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.dsWarning.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-            .padding(.trailing, 4)
         }
     }
 
@@ -532,15 +608,15 @@ struct TopToolbarView: View {
         HStack(spacing: 5) {
             switch service.locationState {
             case .active:
-                Button(action: { Task { await service.clearLocation() } }) {
-                    Label("恢复", systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .buttonStyle(.glass(tint: .dsError, prominent: true))
-                .controlSize(.small)
-                .shadow(color: .dsError.opacity(pulseAnim ? 0.4 : 0), radius: 6)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulseAnim)
-                .help("恢复真实位置")
+                    Button(action: { Task { await service.clearLocation() } }) {
+                        Label("恢复", systemImage: "arrow.counterclockwise")
+                            .font(.system(size: TBFont.button, weight: .semibold))
+                    }
+                    .buttonStyle(.glass(tint: .dsError, prominent: true))
+                    .controlSize(.regular)
+                    .shadow(color: .dsError.opacity(pulseAnim ? 0.4 : 0), radius: 6)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulseAnim)
+                    .help("恢复真实位置")
 
             default:
                 EmptyView()
