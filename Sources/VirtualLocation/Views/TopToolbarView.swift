@@ -49,9 +49,7 @@ struct TopToolbarView: View {
             }
             connectionSection
             separator
-            if service.locationMode == .simple {
-                statusSection
-            }
+            statusSection
             Spacer()
             settingsButton
             actionsSection
@@ -551,7 +549,10 @@ struct TopToolbarView: View {
     }
 
     private var statusTitle: String {
-        if isSimulating { return "模拟中" }
+        if isSimulating {
+            let s = service
+            return "模拟  \(s.activeLat.coordinateString), \(s.activeLng.coordinateString)"
+        }
         return service.locationMode == .proxy ? "代理" : "GPS"
     }
 
