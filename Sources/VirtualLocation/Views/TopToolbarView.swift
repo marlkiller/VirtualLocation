@@ -553,7 +553,7 @@ struct TopToolbarView: View {
             let s = service
             return "GPS  \(s.activeLat.coordinateString), \(s.activeLng.coordinateString)"
         }
-        return service.locationMode == .proxy ? "代理" : "GPS"
+        return "GPS"
     }
 
     private var statusSubtitle: String {
