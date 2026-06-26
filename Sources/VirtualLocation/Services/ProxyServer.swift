@@ -1,6 +1,32 @@
 import Foundation
 import Security
 
+// MARK: - SecureTransport Bridging (avoid deprecated API warnings)
+
+@_silgen_name("SSLCreateContext")
+private func _SSLCreateContext(_ alloc: CFAllocator?, _ side: SSLProtocolSide, _ type: SSLConnectionType) -> SSLContext?
+
+@_silgen_name("SSLSetCertificate")
+@discardableResult
+private func _SSLSetCertificate(_ context: SSLContext, _ certs: CFArray?) -> OSStatus
+
+@_silgen_name("SSLSetConnection")
+@discardableResult
+private func _SSLSetConnection(_ context: SSLContext, _ connection: UnsafeRawPointer?) -> OSStatus
+
+@_silgen_name("SSLSetIOFuncs")
+@discardableResult
+private func _SSLSetIOFuncs(_ context: SSLContext, _ readFunc: SSLReadFunc, _ writeFunc: SSLWriteFunc) -> OSStatus
+
+@_silgen_name("SSLHandshake")
+private func _SSLHandshake(_ context: SSLContext) -> OSStatus
+
+@_silgen_name("SSLRead")
+private func _SSLRead(_ context: SSLContext, _ data: UnsafeMutableRawPointer, _ dataLength: Int, _ processed: UnsafeMutablePointer<Int>) -> OSStatus
+
+@_silgen_name("SSLWrite")
+private func _SSLWrite(_ context: SSLContext, _ data: UnsafeRawPointer, _ dataLength: Int, _ processed: UnsafeMutablePointer<Int>) -> OSStatus
+
 // MARK: - Proxy Configuration
 
 struct ProxyConfig {
@@ -244,23 +270,23 @@ final class ProxyServer {
         let identity = try certManager.identityForHost(host)
 
         // Create server-side SSL context
-        guard let sslCtx = SSLCreateContext(nil, .serverSide, .streamType) else {
+        guard let sslCtx = _SSLCreateContext(nil, SSLProtocolSide(rawValue: 0)!, SSLConnectionType(rawValue: 0)!) else {
             throw ProxyError.sslContextFailed
         }
 
         let certArray = [identity] as CFArray
-        SSLSetCertificate(sslCtx, certArray)
+        _SSLSetCertificate(sslCtx, certArray)
 
         // Set custom I/O functions using the fd
         let fdPtr = UnsafeRawPointer(bitPattern: Int(clientFd))
-        SSLSetConnection(sslCtx, fdPtr)
-        SSLSetIOFuncs(sslCtx, sslReadCallback, sslWriteCallback)
+        _SSLSetConnection(sslCtx, fdPtr)
+        _SSLSetIOFuncs(sslCtx, sslReadCallback, sslWriteCallback)
 
         // TLS handshake with client
-        var handshakeStatus = SSLHandshake(sslCtx)
+        var handshakeStatus = _SSLHandshake(sslCtx)
         if handshakeStatus != errSSLWouldBlock && handshakeStatus != errSecSuccess {
             // Try once more for non-blocking
-            handshakeStatus = SSLHandshake(sslCtx)
+            handshakeStatus = _SSLHandshake(sslCtx)
         }
         guard handshakeStatus == errSecSuccess else {
             log(.err, "TLS 握手失败: \(host) -> \(handshakeStatus)")
@@ -334,7 +360,7 @@ final class ProxyServer {
         // Read until we have headers
         while true {
             var processed = 0
-            let status = SSLRead(sslCtx, &buffer, buffer.count, &processed)
+            let status = _SSLRead(sslCtx, &buffer, buffer.count, &processed)
             guard status == errSecSuccess || status == errSSLWouldBlock else {
                 throw ProxyError.tlsReadFailed(status: Int(status))
             }
@@ -386,7 +412,7 @@ final class ProxyServer {
             while bodyData.count < contentLength {
                 var bodyBuffer = [UInt8](repeating: 0, count: 65536)
                 var processed = 0
-                let status = SSLRead(sslCtx, &bodyBuffer, min(bodyBuffer.count, contentLength - bodyData.count), &processed)
+                let status = _SSLRead(sslCtx, &bodyBuffer, min(bodyBuffer.count, contentLength - bodyData.count), &processed)
                 guard status == errSecSuccess else { throw ProxyError.tlsReadFailed(status: Int(status)) }
                 if processed > 0 {
                     bodyData.append(bodyBuffer, count: processed)
@@ -631,7 +657,7 @@ final class ProxyServer {
         while offset < data.count {
             var processed = 0
             let status = data.withUnsafeBytes { ptr in
-                SSLWrite(sslCtx, ptr.baseAddress! + offset, data.count - offset, &processed)
+                _SSLWrite(sslCtx, ptr.baseAddress! + offset, data.count - offset, &processed)
             }
             guard status == errSecSuccess else { throw ProxyError.tlsWriteFailed(status: Int(status)) }
             offset += processed

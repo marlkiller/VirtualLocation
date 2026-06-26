@@ -72,18 +72,9 @@ final class CertificateManager {
         }
 
         let p12Data = try Data(contentsOf: url)
-        var options: [String: Any] = [
+        let options: [String: Any] = [
             kSecImportExportPassphrase as String: p12Password,
         ]
-
-        // Set ACL: allow the current app to access the private key without prompt
-        var selfApp: SecTrustedApplication?
-        if SecTrustedApplicationCreateFromPath(nil, &selfApp) == errSecSuccess, let selfApp {
-            var access: SecAccess?
-            if SecAccessCreate("VirtualLocation" as CFString, [selfApp] as CFArray, &access) == errSecSuccess, let access {
-                options[kSecImportExportAccess as String] = access
-            }
-        }
 
         var rawItems: CFArray?
         let status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &rawItems)

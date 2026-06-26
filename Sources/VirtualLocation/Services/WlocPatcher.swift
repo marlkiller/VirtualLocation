@@ -69,7 +69,6 @@ private func parseFields(_ data: Data) throws -> [ProtoField] {
         let wireType = Int(tag & 7)
         guard fieldNo != 0 else { throw WlocError.invalidFieldZero }
 
-        let valueStart = offset
         let rawValue: [UInt8]
         switch wireType {
         case 0:
@@ -286,7 +285,9 @@ private func gunzip(_ data: Data) throws -> Data {
         var buffer = [UInt8](repeating: 0, count: bufferSize)
 
         repeat {
-            stream.next_out = UnsafeMutablePointer(mutating: buffer)
+            buffer.withUnsafeMutableBufferPointer { buf in
+                stream.next_out = buf.baseAddress
+            }
             stream.avail_out = uInt(bufferSize)
 
             let result = inflate(&stream, Z_NO_FLUSH)
@@ -294,7 +295,7 @@ private func gunzip(_ data: Data) throws -> Data {
 
             let count = bufferSize - Int(stream.avail_out)
             if count > 0 {
-                output.append(buffer, count: count)
+                output.append(contentsOf: buffer[0..<count])
             }
         } while stream.avail_out == 0
 

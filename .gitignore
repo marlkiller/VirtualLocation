@@ -5,3 +5,4 @@ DerivedData/
 *.xcuserdata
 .DS_Store
 VirtualLocation.app/
+.swiftpm/
