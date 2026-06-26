@@ -48,6 +48,8 @@ swift build -c release
 
 > 代理启动后会自动生成 CA 证书并导入 macOS 钥匙串。
 
+> 代理模式的实现参考了 [proxypin-wloc-spoofer](https://github.com/FFF686868/proxypin-wloc-spoofer) —— 一个通过 ProxyPin 脚本劫持 Apple WLOC 定位响应的开源项目。
+
 ## 系统要求
 
 - macOS 14+
