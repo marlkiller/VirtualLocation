@@ -236,7 +236,11 @@ final class ProxyServer {
             let msg = error.localizedDescription
             if !msg.isEmpty {
                 let full = targetInfo.isEmpty ? msg : "[\(targetInfo)] \(msg)"
-                config.onLog?(.err, "[代理] \(full)")
+                let isTunnelNoise = targetInfo.hasPrefix("CONNECT ") &&
+                    !targetInfo.contains("gs-loc.apple.com") &&
+                    !targetInfo.contains("gs-loc-cn.apple.com")
+                let tag = isTunnelNoise ? " [忽略]" : ""
+                config.onLog?(isTunnelNoise ? .info : .err, "[代理]\(tag) \(full)")
             }
         }
     }
