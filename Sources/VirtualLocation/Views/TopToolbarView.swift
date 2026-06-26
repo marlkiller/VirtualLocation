@@ -551,7 +551,7 @@ struct TopToolbarView: View {
     private var statusTitle: String {
         if isSimulating {
             let s = service
-            return "模拟  \(s.activeLat.coordinateString), \(s.activeLng.coordinateString)"
+            return "GPS  \(s.activeLat.coordinateString), \(s.activeLng.coordinateString)"
         }
         return service.locationMode == .proxy ? "代理" : "GPS"
     }
