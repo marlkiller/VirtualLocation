@@ -484,8 +484,6 @@ struct TopToolbarView: View {
         return .secondary
     }
 
-    // MARK: - Hint
-
     // MARK: - Settings
 
     private var settingsButton: some View {

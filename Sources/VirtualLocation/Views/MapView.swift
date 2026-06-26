@@ -37,7 +37,6 @@ struct MapView: NSViewRepresentable {
     var showPresets: Bool = true
     var onDeletePreset: ((LocationPreset) -> Void)?
     var onCoordinateChanged: ((CLLocationCoordinate2D) -> Void)?
-    var onCoordinateTapped: ((CLLocationCoordinate2D, CGPoint) -> Void)?
     @Binding var zoomInCounter: Int
     @Binding var zoomOutCounter: Int
 
@@ -169,15 +168,12 @@ struct MapView: NSViewRepresentable {
             let coord = map.convert(point, toCoordinateFrom: map)
             parent.selectedCoordinate = coord
             parent.onCoordinateChanged?(coord)
-            parent.onCoordinateTapped?(coord, point)
         }
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
             guard let ann = view.annotation else { return }
-            let pt = mapView.convert(ann.coordinate, toPointTo: mapView)
             parent.selectedCoordinate = ann.coordinate
             parent.onCoordinateChanged?(ann.coordinate)
-            parent.onCoordinateTapped?(ann.coordinate, pt)
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {

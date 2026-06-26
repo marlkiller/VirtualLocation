@@ -36,8 +36,6 @@ final class LocationService: ObservableObject {
         didSet { saveProxySettings() }
     }
     @Published var wlocPatchedCount: Int = 0
-    @Published var showPasswordInput: Bool = false
-    @Published var passwordInputValue: String = ""
 
     private var dvtExitError: String?
 
@@ -523,32 +521,6 @@ final class LocationService: ObservableObject {
         isConnecting = false
     }
 
-    // MARK: - Connection (no longer used)
-
-    func startTunneld() async {
-        // Legacy - no longer used, kept for UI compatibility
-        tunnelState = .connected
-        status = AppStatus.info("✅ 设备已就绪")
-    }
-
-    func stopTunneld() async {
-        // Legacy - no longer used, kept for UI compatibility
-        tunnelState = .disconnected
-        status = AppStatus.info("已断开")
-    }
-
-    func confirmPassword(_ password: String) {
-        showPasswordInput = false
-        // No longer needed - we use --userspace for direct connection
-    }
-
-    func cancelPasswordInput() {
-        showPasswordInput = false
-        passwordInputValue = ""
-        tunnelState = .disconnected
-        status = AppStatus.info("已取消")
-    }
-
     // MARK: - Location
 
     func selectCoordinate(_ coordinate: CLLocationCoordinate2D) {
@@ -828,6 +800,13 @@ final class LocationService: ObservableObject {
         }
         return ""
     }
+
+    func cleanup() {
+        stopProxy()
+        dvtTask?.terminate()
+        dvtTask = nil
+        device = nil
+    }
 }
 
 final class GPXParserDelegate: NSObject, XMLParserDelegate {
@@ -843,11 +822,4 @@ final class GPXParserDelegate: NSObject, XMLParserDelegate {
     }
 }
 
-enum LocationError: LocalizedError {
-    case tunnelError(String)
-    var errorDescription: String? {
-        switch self {
-        case .tunnelError(let m): return "Tunneld 错误: \(m)"
-        }
-    }
-}
+

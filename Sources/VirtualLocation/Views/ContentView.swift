@@ -150,6 +150,9 @@ struct ContentView: View {
                 service.mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            service.cleanup()
+        }
         .background(
             Group {
                 Button("") { Task { await service.setSelectedLocation() } }
@@ -172,17 +175,7 @@ struct ContentView: View {
             }
             .opacity(0)
         )
-        .sheet(isPresented: $service.showPasswordInput) {
-            PasswordInputView(
-                password: $service.passwordInputValue,
-                onConfirm: { password in
-                    service.confirmPassword(password)
-                },
-                onCancel: {
-                    service.cancelPasswordInput()
-                }
-            )
-        }
+
     }
 
     private func fineTuneLocation(latOffset: Double, lngOffset: Double) {
@@ -234,7 +227,7 @@ struct ContentView: View {
             onCoordinateChanged: { coord in
                 service.selectCoordinate(coord)
             },
-            onCoordinateTapped: { _, _ in },
+
             zoomInCounter: $zoomInCounter,
             zoomOutCounter: $zoomOutCounter
         )

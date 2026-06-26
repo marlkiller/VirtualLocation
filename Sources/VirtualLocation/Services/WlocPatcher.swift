@@ -1,10 +1,6 @@
 import Foundation
 import zlib
 
-private func debugLog(_ msg: String) {
-    try? FileHandle.standardError.write(contentsOf: Data("[WLOC] \(msg)\n".utf8))
-}
-
 // MARK: - Protobuf Wire Format Helpers
 
 struct WlocStats {
@@ -236,13 +232,11 @@ private func patchPayload(_ data: Data, stats: inout WlocStats, lat: Double, lng
 
 private func patchFrame(_ data: Data, stats: inout WlocStats, lat: Double, lng: Double, accuracy: Int) throws -> Data {
     guard data.count >= 10 else {
-        debugLog("frameTooShort: \(data.count)")
         throw WlocError.frameTooShort(data.count)
     }
 
     let payloadLen = Int(data[8]) << 8 | Int(data[9])
     guard payloadLen >= 0, payloadLen <= 65535, payloadLen + 10 <= data.count else {
-        debugLog("invalidFrameLength: \(payloadLen) for data.count=\(data.count)")
         throw WlocError.invalidFrameLength(payloadLen, data.count)
     }
 
@@ -346,6 +340,5 @@ func patchWlocResponse(_ data: Data, latitude: Double, longitude: Double, accura
     }
 
     let patched = try patchFrame(workingData, stats: &stats, lat: latitude, lng: longitude, accuracy: accuracy)
-    debugLog("修补完成: wifi:\(stats.wifi) cell:\(stats.cell) locations:\(stats.locations) skipped:\(stats.skipped)")
     return (patched, stats)
 }

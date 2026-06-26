@@ -2,6 +2,8 @@
 
 macOS 上模拟 iOS 设备定位的工具，支持 **普通模式 (DVT)** 和 **代理模式 (MITM)** 两种方案。
 
+![preview](preview.png)
+
 ## 构建
 
 ```bash

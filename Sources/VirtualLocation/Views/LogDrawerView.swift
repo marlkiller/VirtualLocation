@@ -1,50 +1,5 @@
 import SwiftUI
 
-struct PasswordInputView: View {
-    @Binding var password: String
-    var onConfirm: (String) -> Void
-    var onCancel: () -> Void
-
-    @State private var localPassword: String = ""
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("输入管理员密码")
-                .font(.headline)
-
-            Text("启动 Tunneld 需要管理员权限")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            SecureField("密码", text: $localPassword)
-                .textFieldStyle(.roundedBorder)
-                .focused($isFocused)
-                .onSubmit {
-                    onConfirm(localPassword)
-                }
-
-            HStack(spacing: 12) {
-                Button("取消") {
-                    onCancel()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("确认") {
-                    onConfirm(localPassword)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(localPassword.isEmpty)
-            }
-        }
-        .padding(20)
-        .frame(width: 320)
-        .onAppear {
-            isFocused = true
-        }
-    }
-}
-
 struct LogDrawerView: View {
     @ObservedObject var service: LocationService
     @Binding var isExpanded: Bool

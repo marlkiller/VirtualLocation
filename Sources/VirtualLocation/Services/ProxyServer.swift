@@ -210,7 +210,7 @@ final class ProxyServer {
             let msg = error.localizedDescription
             if !msg.isEmpty {
                 let full = targetInfo.isEmpty ? msg : "[\(targetInfo)] \(msg)"
-                print("[VirtualLocation] 代理错误: \(full)")
+                config.onLog?(.err, "[代理] \(full)")
             }
         }
     }
