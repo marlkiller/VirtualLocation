@@ -14,6 +14,9 @@ swift build -c release
 ./build_app.sh arm     # Apple Silicon
 ./build_app.sh intel   # Intel
 ./build_app.sh u2b     # Universal
+
+# 如遇到「Apple 无法验证 'VirtualLocation.app' 是否包含可能危害 Mac 安全或泄漏隐私的恶意软件」提示，请运行以下命令解除隔离标记：
+xattr -cr /Applications/VirtualLocation.app
 ```
 
 ## 两种方案
