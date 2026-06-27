@@ -81,3 +81,12 @@ cat > "$CONTENTS/Info.plist" << EOF
 EOF
 
 echo "✅ Done: $APP_BUNDLE"
+
+# Sign with provided identity, or ad-hoc if not specified
+if [ -n "${CODE_SIGN_IDENTITY:-}" ]; then
+    echo "📝 Signing with identity: $CODE_SIGN_IDENTITY"
+    codesign --force --deep --sign "$CODE_SIGN_IDENTITY" "$APP_BUNDLE"
+else
+    echo "📝 Ad-hoc signing"
+    codesign --force --deep --sign - "$APP_BUNDLE"
+fi
