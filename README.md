@@ -32,7 +32,7 @@ xattr -cr /Applications/VirtualLocation.app
 **用法：**
 1. 数据线连接 iPhone，确保已开启开发者模式
 2. 点击工具栏安装 `pymobiledevice3`（自动创建 `~/.venv_pmd3/` 虚拟环境）
-3. 选择设备，点击地图选点后按 `Cmd+Return` 应用
+3. 选择设备，点击地图选点后按 `应用`
 
 ### 2. 代理模式 (MITM)
 
@@ -47,7 +47,8 @@ xattr -cr /Applications/VirtualLocation.app
 1. iPhone 连接 Mac 同个 WiFi，**先关闭 iPhone 上的 VPN/代理软件**，再设置 WiFi 代理为 Mac IP + 指定端口（默认 8888）
 2. 用 Safari 访问 `http://<Mac IP>:<端口>` 下载并安装 CA 证书
 3. 在 iOS 设置 > 通用 > 关于 > 证书信任设置中**启用**该证书
-4. 点启动代理，选点后按 `Cmd+Return` 应用
+4. 点启动代理，选点后按 `应用`
+5. 关闭/重新打开 iOS 设备的定位服务
 
 > 代理启动后会自动生成 CA 证书并导入 macOS 钥匙串。
 
