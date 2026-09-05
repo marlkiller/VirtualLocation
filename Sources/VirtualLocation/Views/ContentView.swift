@@ -10,9 +10,17 @@ struct ContentView: View {
     @State private var showSearchPanel = true
     @State private var zoomInCounter = 0
     @State private var zoomOutCounter = 0
+    @State private var isProxyTipDismissed = false
 
     private var hasSelection: Bool {
         service.mapSelection.selectedCoordinate != nil || service.isSimulating
+    }
+
+    /// 代理运行中且未被手动关闭时，地图顶部常驻显示「开关定位服务」提醒
+    private var showProxyTip: Bool {
+        service.locationMode == .proxy
+            && service.proxyState.isActive
+            && !isProxyTipDismissed
     }
 
     var body: some View {
@@ -39,9 +47,20 @@ struct ContentView: View {
                 ZStack {
                     mapLayer
 
-                    // Control panel — top
-                    if hasSelection {
-                        VStack {
+                    // Proxy tip + Control panel — top
+                    VStack(spacing: 0) {
+                        if showProxyTip {
+                            ProxyTipBanner(onDismiss: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.95)) {
+                                    isProxyTipDismissed = true
+                                }
+                            })
+                            .padding(.horizontal, DS.Spacing.panelMargin)
+                            .padding(.top, 10)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+
+                        if hasSelection {
                             ControlPanelView(
                                 service: service,
                                 onApplyLocation: { Task { await service.setSelectedLocation() } },
@@ -60,11 +79,12 @@ struct ContentView: View {
                                     service.status = AppStatus.info("坐标已复制: \(lat.coordinateString), \(lng.coordinateString)")
                                 }
                             )
-                            Spacer()
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .id(service.mapSelection.selectedCoordinate.map { "\($0.latitude)-\($0.longitude)" } ?? "none")
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .id(service.mapSelection.selectedCoordinate.map { "\($0.latitude)-\($0.longitude)" } ?? "none")
+                        Spacer()
                     }
+                    .animation(.spring(response: 0.3, dampingFraction: 0.95), value: showProxyTip)
 
                     // Log — bottom
                     if isLogVisible {
@@ -150,6 +170,10 @@ struct ContentView: View {
                 service.mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
             }
         }
+        .onReceive(service.$proxyState) { state in
+            // 代理重新启动后，恢复此前被手动关闭的提醒
+            if state.isActive { isProxyTipDismissed = false }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             service.cleanup()
         }
@@ -188,7 +212,7 @@ struct ContentView: View {
         // If simulating, immediately apply to simulate continuous movement
         if service.isSimulating {
             if service.locationMode == .proxy {
-                Task { await service.applyProxyLocation(lat: newCoord.latitude, lng: newCoord.longitude) }
+                Task { await service.applyProxyLocation(lat: newCoord.latitude, lng: newCoord.longitude, remind: false) }
             } else {
                 Task { await service.setLocation(lat: newCoord.latitude, lng: newCoord.longitude) }
             }

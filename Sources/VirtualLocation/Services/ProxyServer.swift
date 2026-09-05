@@ -36,6 +36,8 @@ struct ProxyConfig {
     var targetAccuracy: Int
     var onLog: ((LogEntry.Level, String) -> Void)?
     var onWlocPatched: ((_ host: String, _ stats: WlocStats) -> Void)?
+    /// 证书信任状态变化。true = 检测到设备疑似未信任 CA（TLS 握手被拒）；false = 已恢复信任
+    var onCertTrust: ((_ untrusted: Bool) -> Void)?
 }
 
 // MARK: - SSL Callbacks
@@ -71,12 +73,26 @@ private let sslWriteCallback: SSLWriteFunc = { (connection, data, dataLength) ->
 final class ProxyServer {
     private var listenFd: Int32 = -1
     private var isRunning = false
-    private let queue = DispatchQueue(label: "com.vloc.proxy", attributes: .concurrent)
     private var activeConnections = Set<Int32>()
     private let connectionsLock = NSLock()
     private let certManager = CertificateManager.shared
 
     private var config: ProxyConfig
+
+    // 证书信任检测 + 透传日志去重（多连接线程共享，需加锁）
+    private let stateLock = NSLock()
+    private var certUntrustedReported = false
+    private var lastUntrustedLogAt = Date.distantPast
+    private var loggedForwardHosts = Set<String>()
+
+    // 上游请求走独立会话，禁用系统代理（避免 Mac 开了系统代理时 MITM 请求回环打到自己）
+    private static let upstreamSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = [:]
+        cfg.timeoutIntervalForRequest = 20
+        cfg.timeoutIntervalForResource = 60
+        return URLSession(configuration: cfg)
+    }()
 
     init(config: ProxyConfig) {
         self.config = config
@@ -139,8 +155,9 @@ final class ProxyServer {
 
         config.onLog?(.info, "代理服务器启动于 0.0.0.0:\(config.port)")
 
-        // Accept connections in background
-        queue.async { [weak self] in
+        // Accept connections in background (dedicated thread: accept() blocks forever,
+        // and GCD's worker pool is too precious to occupy)
+        Thread.detachNewThread { [weak self] in
             self?.acceptLoop()
         }
     }
@@ -165,7 +182,7 @@ final class ProxyServer {
                 continue
             }
             trackConnection(clientFd)
-            queue.async { [weak self] in
+            Thread.detachNewThread { [weak self] in
                 self?.handleClient(clientFd)
                 self?.untrackConnection(clientFd)
             }
@@ -196,6 +213,9 @@ final class ProxyServer {
 
         var targetInfo = ""
         do {
+            // 关闭 Nagle：隧道内小包往返不再被延迟合并（明显减少卡顿感）
+            setTCPNoDelay(clientFd)
+
             var tv = timeval(tv_sec: 30, tv_usec: 0)
             setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
             setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
@@ -233,14 +253,18 @@ final class ProxyServer {
                 try handleHTTPRequest(clientFd: clientFd, rawData: rawData)
             }
         } catch {
+            // 客户端没发请求就断开/空闲超时属正常噪音，静默处理
+            if targetInfo.isEmpty, case ProxyError.readFailed = error { return }
+
             let msg = error.localizedDescription
             if !msg.isEmpty {
                 let full = targetInfo.isEmpty ? msg : "[\(targetInfo)] \(msg)"
-                let isTunnelNoise = targetInfo.hasPrefix("CONNECT ") &&
-                    !targetInfo.contains("gs-loc.apple.com") &&
-                    !targetInfo.contains("gs-loc-cn.apple.com")
-                let tag = isTunnelNoise ? " [忽略]" : ""
-                config.onLog?(isTunnelNoise ? .info : .err, "[代理]\(tag) \(full)")
+                let isWloc = targetInfo.contains("gs-loc.apple.com") || targetInfo.contains("gs-loc-cn.apple.com")
+                // CONNECT 隧道 / 透传 HTTP 的失败属于设备侧常规网络波动，降噪为 info
+                let isPassthrough = targetInfo.hasPrefix("CONNECT ") || targetInfo.contains(" http://")
+                let isNoise = isPassthrough && !isWloc
+                let tag = isNoise ? " [忽略]" : ""
+                config.onLog?(isNoise ? .info : .err, "[代理]\(tag) \(full)")
             }
         }
     }
@@ -264,7 +288,13 @@ final class ProxyServer {
     // MARK: - WLOC MITM Handler
 
     private func handleWlocConnect(clientFd: Int32, host: String) throws {
-        log(.info, "WLOC MITM: \(host)")
+        // 未信任证书的重试洪流期间不再逐条刷 "WLOC MITM" 日志
+        stateLock.lock()
+        let quietMode = certUntrustedReported
+        stateLock.unlock()
+        if !quietMode {
+            log(.info, "WLOC MITM: \(host)")
+        }
 
         // Send 200 Connection Established
         let response = "HTTP/1.1 200 Connection Established\r\n\r\n"
@@ -293,10 +323,12 @@ final class ProxyServer {
             handshakeStatus = _SSLHandshake(sslCtx)
         }
         guard handshakeStatus == errSecSuccess else {
-            log(.err, "TLS 握手失败: \(host) -> \(handshakeStatus)")
+            // 客户端主动拒绝我们的自签证书 → 几乎必然是设备未信任 CA
+            reportHandshakeFailure(host: host, status: handshakeStatus)
             return
         }
 
+        markHandshakeSuccess()
         log(.info, "TLS 握手成功: \(host)")
 
         // Read HTTP request from client TLS
@@ -355,6 +387,45 @@ final class ProxyServer {
         try sendHTTPResponse(sslCtx: sslCtx, urlResponse: urlResponse, data: finalData, stats: patchedStats, originalDataLen: responseData.count)
     }
 
+    // MARK: - Cert Trust Detection
+
+    /// 设备拒绝了我们的自签证书（TLS 握手失败）。首次检测时上报 UI 并给出修复指引，
+    /// 之后静默，仅每 60s 提醒一次，避免未信任期间的重试把日志刷爆。
+    private func reportHandshakeFailure(host: String, status: OSStatus) {
+        let shouldNotify: Bool
+        let shouldLog: Bool
+        stateLock.lock()
+        if !certUntrustedReported {
+            certUntrustedReported = true
+            shouldNotify = true
+        } else {
+            shouldNotify = false
+        }
+        let now = Date()
+        shouldLog = now.timeIntervalSince(lastUntrustedLogAt) > 60
+        if shouldLog { lastUntrustedLogAt = now }
+        stateLock.unlock()
+
+        if shouldNotify {
+            log(.err, "⚠️ 设备疑似未信任 CA 证书 (TLS 握手被拒, status=\(status))，定位修补无法生效")
+            log(.info, "💡 修复: iPhone Safari 打开 http://<Mac IP>:\(config.port) → 下载描述文件并安装 → 证书信任设置中启用")
+            config.onCertTrust?(true)
+        } else if shouldLog {
+            log(.info, "TLS 握手仍失败 (status=\(status))，等待设备信任证书…")
+        }
+    }
+
+    private func markHandshakeSuccess() {
+        stateLock.lock()
+        let wasReported = certUntrustedReported
+        certUntrustedReported = false
+        stateLock.unlock()
+        if wasReported {
+            log(.info, "✅ 证书已被设备信任，修补恢复生效")
+            config.onCertTrust?(false)
+        }
+    }
+
     // MARK: - Read HTTP Request from TLS
 
     private func readHTTPRequest(from sslCtx: SSLContext) throws -> (method: String, path: String, headers: [String: String], body: Data)? {
@@ -362,6 +433,7 @@ final class ProxyServer {
         var buffer = [UInt8](repeating: 0, count: 4096)
 
         // Read until we have headers
+        var idleCycles = 0
         while true {
             var processed = 0
             let status = _SSLRead(sslCtx, &buffer, buffer.count, &processed)
@@ -373,10 +445,13 @@ final class ProxyServer {
             }
             if data.range(of: Data("\r\n\r\n".utf8)) != nil { break }
             if status == errSSLWouldBlock && processed == 0 {
-                // Try again with a small delay
+                // Try again with a small delay; 30s total (socket RCVTIMEO keeps returning EAGAIN)
+                idleCycles += 1
+                if idleCycles > 30_000 { throw ProxyError.tlsReadFailed(status: -1) }
                 usleep(1000)
                 continue
             }
+            idleCycles = 0
             if data.count > 65536 { throw ProxyError.requestTooLarge }
         }
 
@@ -440,15 +515,19 @@ final class ProxyServer {
         var responseHeader = "HTTP/1.1 \(httpResponse.statusCode) \(HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode))\r\n"
         responseHeader += "Content-Length: \(data.count)\r\n"
 
-        // Copy response headers (skip transfer-encoding and content-encoding)
+        // Copy response headers (skip transfer-encoding, content-encoding and connection mgmt;
+        // we close after a single request, so must not advertise keep-alive)
         for (key, value) in httpResponse.allHeaderFields {
             let keyStr = "\(key)"
             let lower = keyStr.lowercased()
-            if lower == "transfer-encoding" || lower == "content-encoding" || lower == "content-length" {
+            if lower == "transfer-encoding" || lower == "content-encoding" || lower == "content-length"
+                || lower == "connection" || lower == "keep-alive" {
                 continue
             }
             responseHeader += "\(keyStr): \(value)\r\n"
         }
+
+        responseHeader += "Connection: close\r\n"
 
         if let stats {
             responseHeader += "X-WLOC-Patched: 1\r\n"
@@ -469,25 +548,29 @@ final class ProxyServer {
     // MARK: - Transparent Tunnel
 
     private func handleTunnel(clientFd: Int32, host: String, port: UInt16) throws {
-        // Connect to target
-        let serverFd = socket(AF_INET, SOCK_STREAM, 0)
-        guard serverFd >= 0 else { throw ProxyError.socketFailed("socket") }
-
+        let serverFd = try connectUpstream(host: host, port: port)
         defer {
             shutdown(serverFd, SHUT_RDWR)
             close(serverFd)
         }
 
-        var tv = timeval(tv_sec: 10, tv_usec: 0)
-        setsockopt(serverFd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(serverFd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        // Send 200 Connection Established
+        let response = "HTTP/1.1 200 Connection Established\r\n\r\n"
+        try writeAll(fd: clientFd, data: Data(response.utf8))
 
-        var serverAddr = sockaddr_in()
-        serverAddr.sin_family = sa_family_t(AF_INET)
-        serverAddr.sin_port = CFSwapInt16HostToBig(port)
-        serverAddr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        // 隧道建立后放宽空闲超时：长连接 (推送/SSE/视频) 不再被 30s 空闲切断
+        setIdleTimeouts(clientFd, seconds: 300)
+        setIdleTimeouts(serverFd, seconds: 300)
 
-        // Resolve hostname
+        // Bidirectional pipe
+        pipeSockets(clientFd: clientFd, serverFd: serverFd)
+    }
+
+    /// DNS 解析 + 连接上游，返回已连接的 fd（已开 TCP_NODELAY）。失败时自行关闭 fd。
+    private func connectUpstream(host: String, port: UInt16) throws -> Int32 {
+        let serverFd = socket(AF_INET, SOCK_STREAM, 0)
+        guard serverFd >= 0 else { throw ProxyError.socketFailed("socket") }
+
         var hints = addrinfo()
         hints.ai_family = AF_INET
         hints.ai_socktype = SOCK_STREAM
@@ -495,38 +578,54 @@ final class ProxyServer {
         let gaiErr = getaddrinfo(host, nil, &hints, &res)
         guard gaiErr == 0, let res else {
             if res != nil { freeaddrinfo(res) }
+            close(serverFd)
             throw ProxyError.dnsFailed(host)
         }
         defer { freeaddrinfo(res) }
-        let addr = UnsafeRawPointer(res.pointee.ai_addr).assumingMemoryBound(to: sockaddr_in.self).pointee
-        serverAddr.sin_addr = addr.sin_addr
+
+        var serverAddr = sockaddr_in()
+        serverAddr.sin_family = sa_family_t(AF_INET)
+        serverAddr.sin_port = CFSwapInt16HostToBig(port)
+        serverAddr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        serverAddr.sin_addr = UnsafeRawPointer(res.pointee.ai_addr)
+            .assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr
 
         let connectResult = withUnsafePointer(to: &serverAddr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 connect(serverFd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
-        guard connectResult == 0 else { throw ProxyError.connectFailed(host: host, port: port) }
+        guard connectResult == 0 else {
+            close(serverFd)
+            throw ProxyError.connectFailed(host: host, port: port)
+        }
 
-        // Send 200 Connection Established
-        let response = "HTTP/1.1 200 Connection Established\r\n\r\n"
-        try writeAll(fd: clientFd, data: Data(response.utf8))
+        setTCPNoDelay(serverFd)
+        return serverFd
+    }
 
-        // Bidirectional pipe
-        pipeSockets(clientFd: clientFd, serverFd: serverFd)
+    private func setTCPNoDelay(_ fd: Int32) {
+        var one: Int32 = 1
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+    }
+
+    private func setIdleTimeouts(_ fd: Int32, seconds: Int) {
+        var tv = timeval(tv_sec: seconds, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     }
 
     private func pipeSockets(clientFd: Int32, serverFd: Int32) {
         let group = DispatchGroup()
 
         group.enter()
-        DispatchQueue.global().async {
+        Thread.detachNewThread {
             self.pipe(from: serverFd, to: clientFd)
             group.leave()
         }
 
         group.enter()
-        DispatchQueue.global().async {
+        Thread.detachNewThread {
             self.pipe(from: clientFd, to: serverFd)
             group.leave()
         }
@@ -538,19 +637,24 @@ final class ProxyServer {
         var buffer = [UInt8](repeating: 0, count: 65536)
         while true {
             let n = read(from, &buffer, buffer.count)
-            guard n > 0 else { break }
+            if n == 0 {
+                // 对端半关闭：通知另一侧发送方向结束，让 HTTP keep-alive 的收尾及时到位
+                shutdown(to, SHUT_WR)
+                return
+            }
+            guard n > 0 else { return } // 超时或错误
             var written = 0
             while written < n {
                 let w = buffer.withUnsafeBytes { ptr in
                     write(to, ptr.baseAddress! + written, n - written)
                 }
-                guard w > 0 else { break }
+                guard w > 0 else { return }
                 written += w
             }
         }
     }
 
-    // MARK: - HTTP Request (CA Download)
+    // MARK: - HTTP Request (CA Download / Plain HTTP Forward)
 
     private func handleHTTPRequest(clientFd: Int32, rawData: Data) throws {
         guard let requestStr = String(data: rawData, encoding: .utf8) else { return }
@@ -558,16 +662,29 @@ final class ProxyServer {
         let lines = requestStr.components(separatedBy: "\r\n")
         guard let firstLine = lines.first else { return }
         let parts = firstLine.components(separatedBy: " ")
-        guard parts.count >= 2 else { return }
+        guard parts.count >= 3 else { return }
 
-        let method = parts[0]
-        let path = parts[1]
+        let method = parts[0].uppercased()
+        let target = parts[1]
+        let version = parts[2]
 
-        let requestPath = path.hasPrefix("http://") || path.hasPrefix("https://")
-            ? (URL(string: path)?.path ?? path)
-            : path
+        // 绝对形式（设备经代理发出的普通 HTTP 请求）→ 原样转发给真实服务器，
+        // 不相干流量直接放行（captive portal 检测、应用内 http 接口等）
+        if target.lowercased().hasPrefix("http://") {
+            try forwardPlainHTTP(clientFd: clientFd, rawData: rawData,
+                                 method: method, target: target, version: version)
+            return
+        }
 
-        switch requestPath {
+        if target.lowercased().hasPrefix("https://") {
+            // https 绝对形式应走 CONNECT，此处无法中继
+            let resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+            try writeAll(fd: clientFd, data: Data(resp.utf8))
+            return
+        }
+
+        // 源形式（Safari 直接访问 http://MacIP:端口）→ 本地服务
+        switch target {
         case "/ca.pem", "/download/ca.pem":
             try serveCADownload(clientFd: clientFd)
         case "/":
@@ -576,9 +693,52 @@ final class ProxyServer {
             if method == "GET" || method == "HEAD" {
                 serveHomePage(clientFd: clientFd)
             } else {
-                let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"
+                let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 try writeAll(fd: clientFd, data: Data(resp.utf8))
             }
+        }
+    }
+
+    /// 把绝对形式的普通 HTTP 请求转发到真实服务器，之后双向裸管道：
+    /// 请求体、chunked、keep-alive 后续请求全部原样透传，无需逐段解析。
+    private func forwardPlainHTTP(clientFd: Int32, rawData: Data, method: String, target: String, version: String) throws {
+        guard let comps = URLComponents(string: target), let host = comps.host, !host.isEmpty else {
+            throw ProxyError.invalidTarget(target)
+        }
+        let port = UInt16(truncatingIfNeeded: comps.port ?? 80)
+
+        let serverFd = try connectUpstream(host: host, port: port)
+        defer {
+            shutdown(serverFd, SHUT_RDWR)
+            close(serverFd)
+        }
+
+        // 请求行改写为源形式（Host 头已指明目标主机），其余字节原样透传
+        let afterScheme = target.dropFirst("http://".count)
+        let path = afterScheme.drop(while: { $0 != "/" })
+        let originForm = path.isEmpty ? "/" : String(path)
+
+        var payload = Data("\(method) \(originForm) \(version)\r\n".utf8)
+        if let firstLineEnd = rawData.range(of: Data("\r\n".utf8))?.upperBound, firstLineEnd < rawData.count {
+            payload.append(Data(rawData[firstLineEnd...]))
+        }
+        try writeAll(fd: serverFd, data: payload)
+
+        logFirstForward(host: host, port: port)
+
+        setIdleTimeouts(clientFd, seconds: 300)
+        setIdleTimeouts(serverFd, seconds: 300)
+        pipeSockets(clientFd: clientFd, serverFd: serverFd)
+    }
+
+    /// 每个目标主机只记一次日志，避免刷屏
+    private func logFirstForward(host: String, port: UInt16) {
+        stateLock.lock()
+        let isFirst = !loggedForwardHosts.contains(host)
+        loggedForwardHosts.insert(host)
+        stateLock.unlock()
+        if isFirst {
+            log(.info, "HTTP 透传: \(host):\(port)")
         }
     }
 
@@ -674,7 +834,7 @@ final class ProxyServer {
         var resultResponse: URLResponse?
         var resultError: Error?
 
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = Self.upstreamSession.dataTask(with: request) { data, response, error in
             resultData = data
             resultResponse = response
             resultError = error

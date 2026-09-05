@@ -26,6 +26,10 @@ final class LocationService: ObservableObject {
         }
     }
     @Published var proxyState: ProxyState = .stopped
+    /// 检测到 iPhone 未信任 CA 证书（工具栏据此显示警示徽章）
+    @Published var proxyCertUntrusted = false
+    /// "192.168.x.x:8888"，启动代理后用于日志与指引
+    @Published private(set) var proxyAddress: String?
     @Published var proxySettings: ProxySettings = {
         if let data = UserDefaults.standard.data(forKey: "proxySettings"),
            let settings = try? JSONDecoder().decode(ProxySettings.self, from: data) {
@@ -148,8 +152,30 @@ final class LocationService: ObservableObject {
                 Task { @MainActor in
                     self?.wlocPatchedCount += stats.locations
                 }
+            },
+            onCertTrust: { [weak self] untrusted in
+                Task { @MainActor in self?.handleCertTrust(untrusted) }
             }
         )
+    }
+
+    private func handleCertTrust(_ untrusted: Bool) {
+        if untrusted {
+            guard !proxyCertUntrusted else { return }
+            proxyCertUntrusted = true
+            let addr = proxyAddress ?? "<Mac IP>:\(proxySettings.port)"
+            addLog(.err, "⚠️ 检测到 iPhone 未信任 CA 证书，HTTPS 定位请求无法修补")
+            addLog(.cmd, "   修复步骤:")
+            addLog(.cmd, "   ① iPhone Safari 打开 http://\(addr)")
+            addLog(.cmd, "   ② 下载描述文件 → 设置 → 通用 → VPN 与设备管理 → 安装")
+            addLog(.cmd, "   ③ 设置 → 通用 → 关于本机 → 证书信任设置 → 启用")
+            status = AppStatus.error("iPhone 未信任 CA 证书")
+        } else {
+            guard proxyCertUntrusted else { return }
+            proxyCertUntrusted = false
+            addLog(.info, "✅ CA 证书已信任，定位修补恢复生效")
+            status = AppStatus.info("证书已信任")
+        }
     }
 
     func startProxy() async {
@@ -174,8 +200,10 @@ final class LocationService: ObservableObject {
             try server.start()
             self.proxyServer = server
             proxyState = .running(port: port)
+            proxyCertUntrusted = false
 
             let ip = getLocalIPAddress() ?? "本机IP"
+            proxyAddress = "\(ip):\(port)"
             addLog(.cmd, "✅ 代理已启动 :\(port)")
             addLog(.cmd, "   iPhone 配置步骤:")
             addLog(.cmd, "   ① WiFi 代理 → \(ip):\(port)")
@@ -198,18 +226,23 @@ final class LocationService: ObservableObject {
         proxyServer = nil
         proxyState = .stopped
         wlocPatchedCount = 0
+        proxyCertUntrusted = false
+        proxyAddress = nil
         addLog(.info, "代理服务器已停止")
         status = AppStatus.info("代理已停止")
         locationState = .idle
     }
 
-    func applyProxyLocation(lat: Double, lng: Double) async {
+    func applyProxyLocation(lat: Double, lng: Double, remind: Bool = true) async {
         if case .running = proxyState {
             proxyServer?.updateTarget(lat: lat, lng: lng)
             locationState = .active(lat: lat, lng: lng)
             mapSelection.activeCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lng)
             mapSelection.centerCoordinate = mapSelection.activeCoordinate
             addLog(.info, "✅ 代理目标已更新: \(lat.coordinateString), \(lng.coordinateString)")
+            if remind {
+                addLog(.cmd, "   💡 提醒: iPhone 开关定位服务 → 重新打开目标 App 后生效")
+            }
             status = AppStatus.info("代理目标已更新")
         }
     }

@@ -20,6 +20,7 @@ struct TopToolbarView: View {
     @State private var showSettings = false
     @State private var showModeTip = false
     @State private var showDevicePicker = false
+    @State private var showCertTip = false
 
     private var isSimulating: Bool { service.isSimulating }
     private var hasDevice: Bool { service.device != nil }
@@ -468,7 +469,65 @@ struct TopToolbarView: View {
                 .foregroundColor(.primary)
 
             proxyActionButton
+
+            if service.proxyCertUntrusted {
+                certWarningBadge
+            }
         }
+    }
+
+    private var certWarningBadge: some View {
+        Button {
+            showCertTip = true
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9))
+                    .symbolEffect(.pulse, options: .repeating)
+                Text("证书未信任")
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.dsWarning.opacity(0.12))
+            .foregroundColor(.dsWarning)
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("iPhone 未信任 CA 证书，点击查看修复步骤")
+        .popover(isPresented: $showCertTip, arrowEdge: .bottom) {
+            certTipContent
+        }
+    }
+
+    private var certTipContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 22))
+                    .foregroundColor(.dsWarning)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("iPhone 未信任 CA 证书")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("HTTPS 定位请求无法修补，请在 iPhone 上完成以下步骤")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.06))
+                .frame(height: 1)
+
+            VStack(alignment: .leading, spacing: 8) {
+                stepRow(index: 1, text: "iPhone Safari 打开 http://\(service.proxyAddress ?? "<Mac IP>:\(service.proxySettings.port)")")
+                stepRow(index: 2, text: "点击「下载 CA 证书」并在弹窗中允许下载")
+                stepRow(index: 3, text: "设置 > 通用 > VPN 与设备管理 → 安装描述文件")
+                stepRow(index: 4, text: "设置 > 通用 > 关于本机 > 证书信任设置 → 启用 VirtualLocation WLOC CA")
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
     }
 
     @ViewBuilder
