@@ -28,6 +28,11 @@ final class LocationService: ObservableObject {
     @Published var proxyState: ProxyState = .stopped
     /// 检测到 iPhone 未信任 CA 证书（工具栏据此显示警示徽章）
     @Published var proxyCertUntrusted = false
+    /// 本次代理运行期间，至少与设备成功完成过一次 TLS 握手。
+    /// 为 false 时「设备是否信任 CA」是未知的，不能显示成「已信任」。
+    @Published var proxyCertVerified = false
+    /// 本次代理运行期间是否收到过任何设备连接
+    @Published var proxyHasTraffic = false
     /// "192.168.x.x:8888"，启动代理后用于日志与指引
     @Published private(set) var proxyAddress: String?
     @Published var proxySettings: ProxySettings = {
@@ -57,12 +62,6 @@ final class LocationService: ObservableObject {
     var activeLng: Double {
         if case .active(_, let lng) = locationState { return lng }
         return mapSelection.selectedCoordinate?.longitude ?? 0
-    }
-
-    var canStartTunnel: Bool {
-        guard case .present = toolState else { return false }
-        guard selectedDeviceUdid != nil || device != nil else { return false }
-        return true
     }
 
     private let deviceManager = DeviceManager()
@@ -118,25 +117,35 @@ final class LocationService: ObservableObject {
 
     // MARK: - Proxy Mode
 
+    /// 本机在 WiFi 上的 IPv4 地址，供设置面板展示代理地址
+    var localIPAddress: String? { getLocalIPAddress() }
+
+    /// 本机在局域网中的 IPv4 地址。
+    /// 只认物理网卡（en*）并跳过 utun / awdl / llw 等虚拟接口 —— VPN、Surge 增强模式、
+    /// AirDrop 都会创建这类接口，取错了会让 iPhone 配到一个根本连不通的地址。
     private func getLocalIPAddress() -> String? {
-        var address: String?
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
         defer { freeifaddrs(ifaddr) }
 
+        var candidates: [(name: String, address: String)] = []
+
         for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
             let name = String(cString: ptr.pointee.ifa_name)
-            if name == "en0" || name == "en1" {
-                let family = ptr.pointee.ifa_addr.pointee.sa_family
-                if family == UInt8(AF_INET) {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    getnameinfo(ptr.pointee.ifa_addr, socklen_t(ptr.pointee.ifa_addr.pointee.sa_len),
-                                &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
-                    address = String(cString: hostname)
-                }
-            }
+            guard name.hasPrefix("en") else { continue }
+            guard ptr.pointee.ifa_flags & UInt32(IFF_UP) != 0 else { continue }
+            guard let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(addr, socklen_t(addr.pointee.sa_len),
+                              &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            let ip = String(cString: hostname)
+            guard !ip.isEmpty, ip != "0.0.0.0" else { continue }
+            candidates.append((name, ip))
         }
-        return address
+
+        return candidates.first(where: { $0.name == "en0" })?.address
+            ?? candidates.first?.address
     }
 
     private func makeProxyConfig(port: UInt16, lat: Double, lng: Double) -> ProxyConfig {
@@ -155,6 +164,20 @@ final class LocationService: ObservableObject {
             },
             onCertTrust: { [weak self] untrusted in
                 Task { @MainActor in self?.handleCertTrust(untrusted) }
+            },
+            onCertVerified: { [weak self] in
+                Task { @MainActor in
+                    guard let self, !self.proxyCertVerified else { return }
+                    self.proxyCertVerified = true
+                    self.addLog(.info, "✅ 设备已信任 CA 证书（TLS 握手成功）")
+                }
+            },
+            onFirstConnection: { [weak self] in
+                Task { @MainActor in
+                    guard let self, !self.proxyHasTraffic else { return }
+                    self.proxyHasTraffic = true
+                    self.addLog(.info, "📶 已收到设备连接")
+                }
             }
         )
     }
@@ -163,6 +186,7 @@ final class LocationService: ObservableObject {
         if untrusted {
             guard !proxyCertUntrusted else { return }
             proxyCertUntrusted = true
+            proxyCertVerified = false
             let addr = proxyAddress ?? "<Mac IP>:\(proxySettings.port)"
             addLog(.err, "⚠️ 检测到 iPhone 未信任 CA 证书，HTTPS 定位请求无法修补")
             addLog(.cmd, "   修复步骤:")
@@ -201,6 +225,8 @@ final class LocationService: ObservableObject {
             self.proxyServer = server
             proxyState = .running(port: port)
             proxyCertUntrusted = false
+            proxyCertVerified = false
+            proxyHasTraffic = false
 
             let ip = getLocalIPAddress() ?? "本机IP"
             proxyAddress = "\(ip):\(port)"
@@ -227,6 +253,8 @@ final class LocationService: ObservableObject {
         proxyState = .stopped
         wlocPatchedCount = 0
         proxyCertUntrusted = false
+        proxyCertVerified = false
+        proxyHasTraffic = false
         proxyAddress = nil
         addLog(.info, "代理服务器已停止")
         status = AppStatus.info("代理已停止")

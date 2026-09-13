@@ -38,6 +38,12 @@ struct ProxyConfig {
     var onWlocPatched: ((_ host: String, _ stats: WlocStats) -> Void)?
     /// 证书信任状态变化。true = 检测到设备疑似未信任 CA（TLS 握手被拒）；false = 已恢复信任
     var onCertTrust: ((_ untrusted: Bool) -> Void)?
+    /// 本次启动以来首次与设备完成 TLS 握手。在此之前「设备是否信任 CA」是未知的，
+    /// 不能因为「没检测到失败」就当作已信任。
+    var onCertVerified: (() -> Void)?
+    /// 本次启动以来收到的第一个入站 TCP 连接。
+    /// 用来区分「设备还没连上来」和「连上了但握手失败」。
+    var onFirstConnection: (() -> Void)?
 }
 
 // MARK: - SSL Callbacks
@@ -82,6 +88,8 @@ final class ProxyServer {
     // 证书信任检测 + 透传日志去重（多连接线程共享，需加锁）
     private let stateLock = NSLock()
     private var certUntrustedReported = false
+    private var certVerifiedReported = false
+    private var firstConnectionReported = false
     private var lastUntrustedLogAt = Date.distantPast
     private var loggedForwardHosts = Set<String>()
 
@@ -182,6 +190,7 @@ final class ProxyServer {
                 continue
             }
             trackConnection(clientFd)
+            noteInboundConnection()
             Thread.detachNewThread { [weak self] in
                 self?.handleClient(clientFd)
                 self?.untrackConnection(clientFd)
@@ -190,6 +199,15 @@ final class ProxyServer {
     }
 
     // MARK: - Connection Tracking
+
+    /// 首个入站连接只上报一次（后续连接不再打扰 UI）
+    private func noteInboundConnection() {
+        stateLock.lock()
+        let first = !firstConnectionReported
+        firstConnectionReported = true
+        stateLock.unlock()
+        if first { config.onFirstConnection?() }
+    }
 
     private func trackConnection(_ fd: Int32) {
         connectionsLock.lock()
@@ -401,6 +419,8 @@ final class ProxyServer {
         } else {
             shouldNotify = false
         }
+        // 握手失败说明「已信任」结论不再成立
+        certVerifiedReported = false
         let now = Date()
         shouldLog = now.timeIntervalSince(lastUntrustedLogAt) > 60
         if shouldLog { lastUntrustedLogAt = now }
@@ -419,10 +439,15 @@ final class ProxyServer {
         stateLock.lock()
         let wasReported = certUntrustedReported
         certUntrustedReported = false
+        let firstVerification = !certVerifiedReported
+        certVerifiedReported = true
         stateLock.unlock()
         if wasReported {
             log(.info, "✅ 证书已被设备信任，修补恢复生效")
             config.onCertTrust?(false)
+        }
+        if firstVerification {
+            config.onCertVerified?()
         }
     }
 

@@ -17,7 +17,6 @@ struct TopToolbarView: View {
     var onUninstallTunnel: () -> Void
 
     @State private var pulseAnim = false
-    @State private var showSettings = false
     @State private var showModeTip = false
     @State private var showDevicePicker = false
     @State private var showCertTip = false
@@ -402,16 +401,6 @@ struct TopToolbarView: View {
         }
     }
 
-    private var pmd3Status: String {
-        switch service.toolState {
-        case .checking: return "检测中…"
-        case .present: return "已就绪"
-        case .missing: return "未安装"
-        case .installing: return "安装中…"
-        case .uninstalling: return "卸载中…"
-        }
-    }
-
     private var pmd3StatusColor: Color {
         switch service.toolState {
         case .checking: return .secondary
@@ -494,7 +483,7 @@ struct TopToolbarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help("iPhone 未信任 CA 证书，点击查看修复步骤")
+        .help("检测到设备拒绝 TLS 握手，通常是未信任 CA 证书，点击查看修复步骤")
         .popover(isPresented: $showCertTip, arrowEdge: .bottom) {
             certTipContent
         }
@@ -507,7 +496,7 @@ struct TopToolbarView: View {
                     .font(.system(size: 22))
                     .foregroundColor(.dsWarning)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("iPhone 未信任 CA 证书")
+                    Text("设备未信任 CA 证书")
                         .font(.system(size: 13, weight: .semibold))
                     Text("HTTPS 定位请求无法修补，请在 iPhone 上完成以下步骤")
                         .font(.system(size: 10))
@@ -585,15 +574,6 @@ struct TopToolbarView: View {
         }
     }
 
-    private var proxyLabel: String {
-        switch service.proxyState {
-        case .stopped: return "未启动"
-        case .starting: return "启动中…"
-        case .running(let port): return ":\(port)"
-        case .failed: return "失败"
-        }
-    }
-
     // MARK: - Status
 
     private var statusSection: some View {
@@ -615,28 +595,6 @@ struct TopToolbarView: View {
         return "GPS"
     }
 
-    private var statusSubtitle: String {
-        if isSimulating { return "已注入" }
-        if service.locationMode == .proxy {
-            switch service.proxyState {
-            case .running: return "就绪"
-            case .starting: return "启动中…"
-            case .failed: return "失败"
-            case .stopped: return "待启动"
-            }
-        }
-        return "待命"
-    }
-
-    private var statusSubtitleColor: Color {
-        if isSimulating { return .dsSuccess }
-        if service.locationMode == .proxy {
-            if case .running = service.proxyState { return .dsWarning }
-            if case .failed = service.proxyState { return .dsError }
-        }
-        return .secondary
-    }
-
     private var statusDotColor: Color {
         if isSimulating { return .dsSuccess }
         if service.locationMode == .proxy {
@@ -650,16 +608,13 @@ struct TopToolbarView: View {
     // MARK: - Settings
 
     private var settingsButton: some View {
-        Button(action: { showSettings = true }) {
+        SettingsLink {
             Image(systemName: "gearshape")
                 .font(.system(size: TBFont.icon))
                 .foregroundColor(.secondary)
         }
         .buttonStyle(.iconButton(size: 28))
-        .help("设置")
-        .sheet(isPresented: $showSettings) {
-            SettingsView()
-        }
+        .help("设置 (⌘,)")
     }
 
     // MARK: - Actions

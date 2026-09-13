@@ -211,15 +211,11 @@ private func patchCellTower(_ data: Data, stats: inout WlocStats, lat: Double, l
 private func patchPayload(_ data: Data, stats: inout WlocStats, lat: Double, lng: Double, accuracy: Int) throws -> Data {
     let fields = try parseFields(data)
     var parts = Data()
-    var wifiCount = 0
-    var cellCount = 0
     for f in fields {
         if f.wireType == 2 && f.fieldNo == 2 {
-            wifiCount += 1
             let patched = try patchWifiDevice(f.value, stats: &stats, lat: lat, lng: lng, accuracy: accuracy)
             parts += encodeField(fieldNo: f.fieldNo, wireType: f.wireType, value: patched)
         } else if f.wireType == 2 && (f.fieldNo == 22 || f.fieldNo == 24) {
-            cellCount += 1
             let patched = try patchCellTower(f.value, stats: &stats, lat: lat, lng: lng, accuracy: accuracy)
             parts += encodeField(fieldNo: f.fieldNo, wireType: f.wireType, value: patched)
         } else {

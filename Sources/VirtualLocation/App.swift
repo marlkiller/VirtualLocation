@@ -60,13 +60,16 @@ struct VirtualLocationApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.openWindow) private var openWindow
 
+    /// 应用级共享状态，主窗口与偏好设置窗口共用同一实例
+    @StateObject private var service = LocationService()
+
     init() {
         setupSignalHandlers()
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(service: service)
         }
         .windowResizability(.automatic)
         .windowStyle(.hiddenTitleBar)
@@ -77,6 +80,11 @@ struct VirtualLocationApp: App {
                     openWindow(id: "about")
                 }
             }
+        }
+
+        // 系统标准的偏好设置窗口：自动出现在 App 菜单中，并绑定 ⌘,
+        Settings {
+            SettingsView(service: service)
         }
 
         Window("关于 VirtualLocation", id: "about") {

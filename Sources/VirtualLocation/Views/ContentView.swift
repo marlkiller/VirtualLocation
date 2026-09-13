@@ -2,7 +2,7 @@ import SwiftUI
 import MapKit
 
 struct ContentView: View {
-    @StateObject private var service = LocationService()
+    @ObservedObject var service: LocationService
     @State private var isLogExpanded = true
     @State private var isLogVisible = true
     @State private var searchText = ""
@@ -172,7 +172,9 @@ struct ContentView: View {
         }
         .onReceive(service.$proxyState) { state in
             // 代理重新启动后，恢复此前被手动关闭的提醒
-            if state.isActive { isProxyTipDismissed = false }
+            if state.isActive {
+                isProxyTipDismissed = false
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             service.cleanup()
