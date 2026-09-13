@@ -262,8 +262,13 @@ final class CertificateManager: @unchecked Sendable {
         for url in [caCertPEM, caKeyPEM, caP12] {
             try? fileManager.removeItem(at: url)
         }
-        try fileManager.copyItem(at: certOut, to: caCertPEM)
-        try fileManager.copyItem(at: keyOut, to: caKeyPEM)
+
+        // 不能直接把 pkcs12 拆出来的文件 copy 过来：`openssl pkcs12 -out` 会在 PEM 前面
+        // 写上 `Bag Attributes` / `localKeyID:` / `subject=` / `issuer=` 这些行。
+        // ca-cert.pem 既要被 app 自己解析、又要通过 HTTP 发给 iPhone 安装，混着这些行会解析失败。
+        // 用 x509 / pkey 重新输出一遍洗掉，结果与 generateCA 产出的文件完全一致。
+        try runOpenssl(args: ["x509", "-in", certOut.path, "-out", caCertPEM.path])
+        try runOpenssl(args: ["pkey", "-in", keyOut.path, "-out", caKeyPEM.path])
         restrictToOwner(caKeyPEM)
 
         try runOpenssl(args: [
@@ -287,7 +292,8 @@ final class CertificateManager: @unchecked Sendable {
         for url in [caCertPEM, caKeyPEM, caP12] {
             try? fileManager.removeItem(at: url)
         }
-        // openssl -CAcreateserial 产生的序列号文件
+        // 清掉旧版本留下的 `openssl -CAcreateserial` 序列号文件。
+        // 现在签服务器证书用的是随机序列号（见 generateServerCert），不再产生这种文件。
         if let entries = try? fileManager.contentsOfDirectory(at: supportDir, includingPropertiesForKeys: nil) {
             for url in entries where url.pathExtension == "srl" {
                 try? fileManager.removeItem(at: url)
@@ -512,12 +518,20 @@ final class CertificateManager: @unchecked Sendable {
             "-config", serverConf.path
         ])
 
+        // 序列号用**随机值**，不用 `-CAcreateserial` 的递增计数器。
+        //
+        // 计数器文件（ca-cert.srl）是每台机器各自维护的：两台 Mac 共用同一套 CA 时，
+        // 两边都从 1 开始数，于是会给**同一个签发者**签出重复的序列号。
+        // RFC 5280 §4.1.2.2 要求序列号在同一 CA 下唯一，随机值天然不会撞，
+        // 也省掉了那个需要跟着 CA 一起清理的 .srl 状态文件。
+        let serial = String(format: "%016llX", UInt64.random(in: 1...UInt64.max))
+
         try runOpenssl(args: [
             "x509", "-req",
             "-in", csr.path,
             "-CA", caCertPEM.path,
             "-CAkey", caKeyPEM.path,
-            "-CAcreateserial",
+            "-set_serial", "0x\(serial)",
             "-out", serverCertPEM.path,
             "-days", "365",
             "-extfile", serverConf.path,
@@ -555,14 +569,31 @@ final class CertificateManager: @unchecked Sendable {
         return Date(timeIntervalSinceReferenceDate: number.doubleValue)
     }
 
-    /// 去掉 PEM 头尾并按 base64 解码为 DER
+    /// PEM → DER
+    ///
+    /// 只取 `-----BEGIN`/`-----END` **之间**的内容。不能简单地"排除以 ----- 开头的行、
+    /// 其余全当 base64"：`openssl pkcs12 -out` 会在 PEM 前面写上
+    /// `Bag Attributes` / `localKeyID:` / `subject=` / `issuer=` 这类行，
+    /// 那样拼出来的 base64 是非法的，`Data(base64Encoded:)` 直接返回 nil
+    /// —— 表现就是导入后报"证书文件格式无法解析"。
     static func derData(fromPEM pem: Data) -> Data? {
         guard let text = String(data: pem, encoding: .utf8) else { return nil }
-        let base64 = text
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("-----") }
-            .joined()
+        var collecting = false
+        var base64 = ""
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("-----BEGIN") {
+                collecting = true
+                continue
+            }
+            if trimmed.hasPrefix("-----END") {
+                break
+            }
+            if collecting {
+                base64 += trimmed
+            }
+        }
+        guard !base64.isEmpty else { return nil }
         return Data(base64Encoded: base64)
     }
 
