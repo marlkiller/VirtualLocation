@@ -33,6 +33,9 @@ final class CertificateViewModel: ObservableObject {
     }
 
     @Published private(set) var info: CACertificateInfo?
+    /// 读取 CA 失败的原因。原来是静默吞掉的 —— 一旦出错界面只显示"尚未生成 CA 证书"，
+    /// 完全看不出到底为什么，连排查都无从下手。
+    @Published private(set) var loadError: String?
     @Published private(set) var isBusy = false
     @Published var banner: Banner?
     @Published var isConfirmingRegenerate = false
@@ -45,8 +48,10 @@ final class CertificateViewModel: ObservableObject {
         do {
             let cert = try manager.currentCACertificate()
             info = manager.info(for: cert)
+            loadError = nil
         } catch {
             info = nil
+            loadError = error.localizedDescription
         }
     }
 
@@ -203,7 +208,9 @@ struct CertificateSettingsPane: View {
         }
         .formStyle(.grouped)
         .frame(width: 560, height: 560)
-        .task { model.loadInitial() }
+        // 用 onAppear 而不是 task：task 只在视图生命周期内跑一次，切走再切回来不会刷新，
+        // 于是在外面把 CA 删掉/导入之后，这一页会一直停在旧状态（甚至一直是"尚未生成"）。
+        .onAppear { model.loadInitial() }
     }
 
     // MARK: Certificate info
@@ -244,9 +251,26 @@ struct CertificateSettingsPane: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
-                Text("尚未生成 CA 证书")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("尚未生成 CA 证书")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+
+                    if let loadError = model.loadError {
+                        Text(loadError)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Color.dsError)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Text(CertificateManager.shared.storageDirectory.path)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
         } header: {
             HStack {

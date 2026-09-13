@@ -169,7 +169,14 @@ final class CertificateManager: @unchecked Sendable {
 
         var serial = ""
         if let serialData = SecCertificateCopySerialNumberData(cert, nil) as Data? {
-            serial = serialData.map { String(format: "%02X", $0) }.joined()
+            var bytes = [UInt8](serialData)
+            // DER INTEGER 在最高位为 1 时会补一个前导 0x00 保持正数。
+            // openssl / 钥匙串访问显示序列号时都会去掉它，这里跟着去掉，
+            // 否则界面上会多出两位（00CE827D… vs CE827D…），跟别的工具对不上。
+            if bytes.count > 1 && bytes[0] == 0x00 {
+                bytes.removeFirst()
+            }
+            serial = bytes.map { String(format: "%02X", $0) }.joined()
         }
 
         let der = SecCertificateCopyData(cert) as Data
